@@ -11,10 +11,7 @@ def reprojectToWGS84(standsfn):  # creates 'standsWGS.geojson'
     os.system(command)
     
 def osmRoadsAPI():
-    stands = ogr.Open('standsWGS.geojson')
-    standsLayer = stands.GetLayer()
-
-    extent =  standsLayer.GetExtent()
+    extent =  getBbox('standsWGS.geojson')
     bboxCoords = str(extent[0]) + ',' + str(extent[2]) + ',' + str(extent[1]) + ',' + str(extent[3])
 
     url = 'http://www.overpass-api.de/api/xapi?way[highway=*][bbox=%s]' % bboxCoords
@@ -141,7 +138,8 @@ def selectCell(gridfn,bufferfn):
             if geomGrid.Intersects(geomBuffer):
                 cellStands.append(j)
     
-    standDict[i] = cellStands
+        standDict[i] = cellStands
+
     selectedCell = max(standDict, key=lambda x:len(standDict[x]))
     return selectedCell
 
@@ -172,22 +170,28 @@ def bbox2pixelOffset(rasterfn,bbox):
     yoff = pymin-ysize
     return xoff,yoff,xsize,ysize,pixelWidth,pixelHeight #xoff,yoff are the counts from the origion of the raster. xsize (rasterwidth),ysize(rasterheight) are the cols,rows of the raster
     
-def raster2array(rasterfn,shpfn):
+def raster2array(rasterfn,standsfn):
     
-    bbox = getBbox(shpfn)
+    bbox = getBbox(standsfn)
     xmin,xmax,ymin,ymax = bbox
+    offset = 200.0
+    xmin -= offset
+    xmax += offset
+    ymin -= offset
+    ymax += offset
+    bbox = xmin,xmax,ymin,ymax
     raster = gdal.Open(rasterfn)
     xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
     band = raster.GetRasterBand(1)
     array = band.ReadAsArray(xoff, yoff, xsize, ysize)
     return array, bbox  
         
-def array2raster(newRasterfn,rasterfn,bbox,array):
+def array2raster(newCostSurfacefn,rasterfn,bbox,array):
     xmin,xmax,ymin,ymax = bbox
     xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
     raster = gdal.Open(rasterfn)
     driver = gdal.GetDriverByName('GTiff')
-    outRaster = driver.Create(newRasterfn, xsize, ysize, gdal.GDT_Byte)
+    outRaster = driver.Create(newCostSurfacefn, xsize, ysize, gdal.GDT_Byte)
     outRaster.SetGeoTransform((xmin, pixelWidth, 0, ymax, 0, pixelHeight))
     outband = outRaster.GetRasterBand(1)
     outband.WriteArray(array)
@@ -196,7 +200,7 @@ def array2raster(newRasterfn,rasterfn,bbox,array):
     outRaster.SetProjection(outRasterSRS.ExportToWkt())
     outband.FlushCache()
         
-def createPath(costSurfacefn,costSurfaceArray,selectedCell,gridfn):   
+def createPath(CostSurfacefn,costSurfaceArray,selectedCell,gridfn):   
     # get index of selected cell
     grid = ogr.Open(gridfn)
     lyrGrid = grid.GetLayer()
@@ -205,44 +209,40 @@ def createPath(costSurfacefn,costSurfaceArray,selectedCell,gridfn):
     centroidSelectedCell = geomSelectedCell.Centroid()
     selectedCellX = centroidSelectedCell.GetX()
     selectedCellY = centroidSelectedCell.GetY()
-    
-    selectedCellIndexX,selectedCellIndexY,pixelWidth,pixelHeight = coord2pixelOffset(costSurfacefn,selectedCellX,selectedCellY)
-    
+    selectedCellIndexX,selectedCellIndexY,pixelWidth,pixelHeight = coord2pixelOffset(CostSurfacefn,selectedCellX,selectedCellY)
+
     # get index of existing road (first point that occurs)
-    roadIndex = np.nonzero(costSurfaceArray == 1)
-    
+    roadIndexX, roadIndexY = np.where(costSurfaceArray == 0)
     # create path
-    indices, weight = route_through_array(costSurfaceArray, (selectedCellIndexX,selectedCellIndexY), tuple(roadIndex[0]))
+    indices, weight = route_through_array(costSurfaceArray, (selectedCellIndexX,selectedCellIndexY), (roadIndexX[0],roadIndexY[0]))
     indices = np.array(indices).T
-    path = np.zeros_like(image)
+    path = np.zeros_like(costSurfaceArray)
     path[indices[0], indices[1]] = 1
     
     # merge path with existing roads
     costSurfaceArray[path == 1] = 0
+    return costSurfaceArray
  
     
-def main(standsfn,bufferfn,gridfn,costSurfacefn,osmRoadsfn,newRasterfn):
+def main(standsfn,bufferfn,gridfn,costSurfacefn,osmRoadsfn,newCostSurfacefn):
     buffer(standsfn, bufferfn) # creates 'buffer_stands.shp'
     selectedCell = selectCell(gridfn,bufferfn) # creates string 'selectedCell'
     costSurfaceArray, bbox = raster2array(costSurfacefn,standsfn) # creates array 'costSurfaceArray' and float 'bbox'
     
     # osm2tif 
     reprojectToWGS84(standsfn)  # creates 'standsWGS.geojson'
-    osmRoadsAPI() # creates 'roads.osm'
+#    osmRoadsAPI() # creates 'roads.osm'
     osm2geojson() # creates 'osmroads.geojson'
     geojson2geotiff(costSurfacefn,bbox) # creates 'OSMroads.tif'
     os.remove('standsWGS.geojson')
-    os.remove('OSMroads.osm')
+#    os.remove('OSMroads.osm')
     
-    osmRoadsArray, bbox = raster2array(osmRoadsfn,standsfn)
-    costSurfaceArray[osmRoadsArray == 1.0] = 0
-    array2raster(newRasterfn,costSurfacefn,bbox,costSurfaceArray)
+    osmRoadsArray, bbox = raster2array(osmRoadsfn,standsfn) # creates array 'costSurfaceArray' and float 'bbox'
+    costSurfaceArray[osmRoadsArray == 1.0] = 0 # updates array 'costSurfaceArray'    
+    costSurfaceArray = createPath(newCostSurfacefn,costSurfaceArray,selectedCell,gridfn) # updates array 'costSurfaceArray'
     
-    quit()
+    array2raster(newCostSurfacefn,costSurfacefn,bbox,costSurfaceArray) # writes 'costSurfaceArray' to 'newCostSurface.tif'
     
-    createPath(costSurfacefn,costSurfaceArray,selectedCell,gridfn)
-    
-#    array2raster(newRasterfn,costSurfacefn,bbox,costSurfaceArray)
     
         
 if __name__ == "__main__":
@@ -251,5 +251,5 @@ if __name__ == "__main__":
     bufferfn = 'buffer_stands.shp'
     costSurfacefn = 'slopeBig.tif'
     osmRoadsfn = 'osmRoads.tif'
-    newRasterfn = 'intermediate.tif'
-    main(standsfn,bufferfn,gridfn,costSurfacefn,osmRoadsfn,newRasterfn)
+    newCostSurfacefn = 'newCostSurface.tif'
+    main(standsfn,bufferfn,gridfn,costSurfacefn,osmRoadsfn,newCostSurfacefn)
