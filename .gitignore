@@ -16,3 +16,4 @@ grass_script/
 *.tif
 *.xml
 *.geojson
+*.osm
