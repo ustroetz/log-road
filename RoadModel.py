@@ -1,9 +1,101 @@
-import ogr, gdal
+import ogr, gdal, osr
 import os
 import numpy as np
 from skimage.graph import route_through_array
+import requests
 
-def Buffer(standsfn, bufferfn, Dist=250):
+def reprojectToWGS84(standsfn):  # creates 'standsWGS.geojson'
+    if os.path.exists('standsWGS.geojson'):
+          os.remove('standsWGS.geojson')
+    command = "ogr2ogr -f GeoJSON -t_srs EPSG:4326 %s %s" %('standsWGS.geojson', standsfn)
+    os.system(command)
+    
+def osmRoadsAPI():
+    stands = ogr.Open('standsWGS.geojson')
+    standsLayer = stands.GetLayer()
+
+    extent =  standsLayer.GetExtent()
+    bboxCoords = str(extent[0]) + ',' + str(extent[2]) + ',' + str(extent[1]) + ',' + str(extent[3])
+
+    url = 'http://www.overpass-api.de/api/xapi?way[highway=*][bbox=%s]' % bboxCoords
+    osm = requests.get(url)
+
+    # write osm_data to osm file
+    file = open(r'OSMroads.osm', 'w')
+    file.write(osm.text)
+    file.close()
+
+def osm2geojson():
+    roadsDs = ogr.Open('OSMroads.osm')
+    inLayer = roadsDs.GetLayer(1) # layer 1 for ways
+
+    outDriver = ogr.GetDriverByName('GeoJSON')
+    
+    if os.path.exists('OSMroads.geojson'):
+        outDriver.DeleteDataSource('OSMroads.geojson')
+
+    outDataSource = outDriver.CreateDataSource('OSMroads.geojson')
+    outLayer = outDataSource.CreateLayer('OSMroads.geojson', geom_type=ogr.wkbLineString )
+
+    # create the input SpatialReference
+    sourceSR = inLayer.GetSpatialRef()
+
+    # create the output SpatialReference
+    targetSR = osr.SpatialReference()
+    targetSR.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
+
+    # create transform
+    coordTrans = osr.CoordinateTransformation(sourceSR,targetSR)
+
+    # Get the output Layer's Feature Definition
+    featureDefn = outLayer.GetLayerDefn()
+
+    # loop through the input features
+    inFeature = inLayer.GetNextFeature()
+    while inFeature:
+
+        # get the input geometry
+        geom = inFeature.GetGeometryRef()
+        # reproject the geometry
+        geom.Transform(coordTrans)
+        
+        # create a new feature
+        outFeature = ogr.Feature(featureDefn)
+
+        # set new geometry
+        outFeature.SetGeometry(geom)
+        # Add new feature to output Layer
+        outLayer.CreateFeature(outFeature)
+
+        # destroy the features and get the next input feature
+        outFeature.Destroy
+        inFeature.Destroy
+        inFeature = inLayer.GetNextFeature()
+
+    # Close DataSources
+    roadsDs.Destroy()
+    outDataSource.Destroy()
+
+def geojson2geotiff(rasterfn,bbox):    
+    xmin,xmax,ymin,ymax = bbox
+    xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
+    
+    source_ds = ogr.Open('OSMroads.geojson')
+    source_layer = source_ds.GetLayer()
+    
+    target_ds = gdal.GetDriverByName('GTiff').Create('OSMroads.tif', xsize, ysize, gdal.GDT_Byte)
+    target_ds.SetGeoTransform((xmin, pixelWidth, 0, ymax, 0, pixelHeight))
+    band = target_ds.GetRasterBand(1)
+    NoData_value = 255
+    band.SetNoDataValue(NoData_value)
+    band.FlushCache()
+    gdal.RasterizeLayer(target_ds, [1], source_layer, burn_values=[1])   
+
+    target_dsSRS = osr.SpatialReference()
+    target_dsSRS.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
+    target_ds.SetProjection(target_dsSRS.ExportToWkt())
+
+def buffer(standsfn, bufferfn, Dist=250):
     stands = ogr.Open(standsfn)
     lyrStands = stands.GetLayer()
     shpdriver = ogr.GetDriverByName('ESRI Shapefile')
@@ -59,36 +151,6 @@ def getBbox(shpfn):
     bbox = lyr.GetExtent()
     return bbox
 
-def array2raster(array,rasterfn,newrasterfn,bbox):
- 
-    raster = gdal.Open(rasterfn)
-    geotransform = raster.GetGeoTransform()
-    pixelWidth = geotransform[1] 
-    pixelHeight = geotransform[5]
-    
-    originX, originY, rasterWidth,rasterHeight = bbox2pixelOffset(rasterfn,bbox)
-    xmin,xmax,ymin,ymax = bbox
-
-    
-    xOffset = int((xmin - originX)/pixelWidth)
-    yOffset = int((ymin - originY)/pixelHeight)
-    print xOffset, yOffset
-    xcount = int((xmax - xmin)/pixelWidth)+1
-    ycount = int((ymax - ymin)/pixelHeight)+1
-
-    print xcount, ycount
-    dataset = gdal.GetDriverByName('GTiff').Create(newrasterfn, xcount, ycount, gdal.GDT_Byte)
-    dataset.SetGeoTransform((
-        xmin, pixelWidth, 0,
-        ymax, 0, pixelHeight,
-        ))
-            
-    rasterSRS.ImportFromWkt(raster.GetProjectionRef())
-    dataset.SetProjection(rasterSRS.ExportToWkt())
-    dataset.GetRasterBand(1).WriteArray(array)
-    dataset.FlushCache() 
-
-
 def coord2pixelOffset(rasterfn,x,y):
     raster = gdal.Open(rasterfn)
     geotransform = raster.GetGeoTransform()
@@ -98,38 +160,42 @@ def coord2pixelOffset(rasterfn,x,y):
     pixelHeight = geotransform[5]
     xOffset = int((x - originX)/pixelWidth)
     yOffset = int((y - originY)/pixelHeight)
-    return xOffset,yOffset
+    return xOffset,yOffset,pixelWidth,pixelHeight
 
 def bbox2pixelOffset(rasterfn,bbox):
     xmin,xmax,ymin,ymax = bbox
-    pxmin,pymin = coord2pixelOffset(rasterfn,xmin,ymin)
-    pxmax,pymax = coord2pixelOffset(rasterfn,xmax,ymax)
-    rasterWidth = abs(pxmax - pxmin)
-    rasterHeight = abs(pymax - pymin)
-    originX = pxmin
-    originY = pymin-rasterHeight
-    return originX, originY, rasterWidth,rasterHeight 
+    pxmin,pymin,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmin,ymin)
+    pxmax,pymax,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmax,ymax)
+    xsize = abs(pxmax - pxmin)
+    ysize = abs(pymax - pymin)
+    xoff = pxmin
+    yoff = pymin-ysize
+    return xoff,yoff,xsize,ysize,pixelWidth,pixelHeight #xoff,yoff are the counts from the origion of the raster. xsize (rasterwidth),ysize(rasterheight) are the cols,rows of the raster
     
 def raster2array(rasterfn,shpfn):
+    
     bbox = getBbox(shpfn)
     xmin,xmax,ymin,ymax = bbox
-    bboxOffset = 10.0
-    xmin = xmin-bboxOffset
-    xmax = xmax+bboxOffset
-    ymin = ymin-bboxOffset
-    ymax = ymax+bboxOffset
-    bbox = xmin,xmax,ymin,ymax
     raster = gdal.Open(rasterfn)
-    originX, originY, rasterWidth, rasterHeight = bbox2pixelOffset(rasterfn,bbox)
+    xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
     band = raster.GetRasterBand(1)
-    array = band.ReadAsArray(originX, originY, rasterWidth, rasterHeight)
-    
-    
-    newrasterfn = 'blbla.tif'
-    array2raster(array,rasterfn,newrasterfn,bbox)    
-    quit()
-    return array
-    
+    array = band.ReadAsArray(xoff, yoff, xsize, ysize)
+    return array, bbox  
+        
+def array2raster(newRasterfn,rasterfn,bbox,array):
+    xmin,xmax,ymin,ymax = bbox
+    xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
+    raster = gdal.Open(rasterfn)
+    driver = gdal.GetDriverByName('GTiff')
+    outRaster = driver.Create(newRasterfn, xsize, ysize, gdal.GDT_Byte)
+    outRaster.SetGeoTransform((xmin, pixelWidth, 0, ymax, 0, pixelHeight))
+    outband = outRaster.GetRasterBand(1)
+    outband.WriteArray(array)
+    outRasterSRS = osr.SpatialReference()
+    outRasterSRS.ImportFromWkt(raster.GetProjectionRef())
+    outRaster.SetProjection(outRasterSRS.ExportToWkt())
+    outband.FlushCache()
+        
 def createPath(costSurfacefn,costSurfaceArray,selectedCell,gridfn):   
     # get index of selected cell
     grid = ogr.Open(gridfn)
@@ -140,7 +206,7 @@ def createPath(costSurfacefn,costSurfaceArray,selectedCell,gridfn):
     selectedCellX = centroidSelectedCell.GetX()
     selectedCellY = centroidSelectedCell.GetY()
     
-    selectedCellIndexX,selectedCellIndexY = coord2pixelOffset(costSurfacefn,selectedCellX,selectedCellY)
+    selectedCellIndexX,selectedCellIndexY,pixelWidth,pixelHeight = coord2pixelOffset(costSurfacefn,selectedCellX,selectedCellY)
     
     # get index of existing road (first point that occurs)
     roadIndex = np.nonzero(costSurfaceArray == 1)
@@ -153,14 +219,30 @@ def createPath(costSurfacefn,costSurfaceArray,selectedCell,gridfn):
     
     # merge path with existing roads
     costSurfaceArray[path == 1] = 0
+ 
     
-def main(standsfn,bufferfn,gridfn,costSurfacefn,osmRoadsfn):
-    Buffer(standsfn, bufferfn)
-    selectedCell = selectCell(gridfn,bufferfn) 
-    costSurfaceArray = raster2array(costSurfacefn,standsfn)
-    osmRoadsArray = raster2array(osmRoadsfn,standsfn)
+def main(standsfn,bufferfn,gridfn,costSurfacefn,osmRoadsfn,newRasterfn):
+    buffer(standsfn, bufferfn) # creates 'buffer_stands.shp'
+    selectedCell = selectCell(gridfn,bufferfn) # creates string 'selectedCell'
+    costSurfaceArray, bbox = raster2array(costSurfacefn,standsfn) # creates array 'costSurfaceArray' and float 'bbox'
+    
+    # osm2tif 
+    reprojectToWGS84(standsfn)  # creates 'standsWGS.geojson'
+    osmRoadsAPI() # creates 'roads.osm'
+    osm2geojson() # creates 'osmroads.geojson'
+    geojson2geotiff(costSurfacefn,bbox) # creates 'OSMroads.tif'
+    os.remove('standsWGS.geojson')
+    os.remove('OSMroads.osm')
+    
+    osmRoadsArray, bbox = raster2array(osmRoadsfn,standsfn)
     costSurfaceArray[osmRoadsArray == 1.0] = 0
+    array2raster(newRasterfn,costSurfacefn,bbox,costSurfaceArray)
+    
+    quit()
+    
     createPath(costSurfacefn,costSurfaceArray,selectedCell,gridfn)
+    
+#    array2raster(newRasterfn,costSurfacefn,bbox,costSurfaceArray)
     
         
 if __name__ == "__main__":
@@ -169,4 +251,5 @@ if __name__ == "__main__":
     bufferfn = 'buffer_stands.shp'
     costSurfacefn = 'slopeBig.tif'
     osmRoadsfn = 'osmRoads.tif'
-    main(standsfn,bufferfn,gridfn,costSurfacefn,osmRoadsfn)
+    newRasterfn = 'intermediate.tif'
+    main(standsfn,bufferfn,gridfn,costSurfacefn,osmRoadsfn,newRasterfn)
