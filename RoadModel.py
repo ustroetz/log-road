@@ -3,8 +3,85 @@ import os
 import numpy as np
 from skimage.graph import route_through_array
 import requests
+from math import ceil
 
-def buffer(standsfn, bufferfn, Dist=250):
+def createProjectBbox(standsfn,offsetBbox):
+    bbox = getBbox(standsfn)
+    xmin,xmax,ymin,ymax = bbox
+    xmin -= offsetBbox
+    xmax += offsetBbox
+    ymin -= offsetBbox
+    ymax += offsetBbox
+    bbox = xmin,xmax,ymin,ymax
+    return bbox
+    
+def createGrid(gridfn,bbox,gridHeight,gridWidth):
+
+    xmin,xmax,ymin,ymax = bbox
+    
+    # get rows
+    rows = ceil((ymax-ymin)/gridHeight)
+    # get columns
+    cols = ceil((xmax-xmin)/gridWidth)
+
+    # start grid cell envelope
+    ringXleftOrigin = xmin
+    ringXrightOrigin = xmin + gridWidth
+    ringYtopOrigin = ymax
+    ringYbottomOrigin = ymax-gridHeight
+
+    # create output file
+    outDriver = ogr.GetDriverByName('ESRI Shapefile')
+    if os.path.exists(gridfn):
+        os.remove(gridfn)
+    outDataSource = outDriver.CreateDataSource(gridfn)
+    outLayer = outDataSource.CreateLayer(gridfn,geom_type=ogr.wkbPolygon )
+    featureDefn = outLayer.GetLayerDefn()
+
+    # create grid cells
+    countcols = 0
+    while countcols < cols:
+        countcols += 1
+
+        # reset envelope for rows
+        ringYtop = ringYtopOrigin
+        ringYbottom =ringYbottomOrigin
+        countrows = 0
+
+        while countrows < rows:
+            countrows += 1
+            ring = ogr.Geometry(ogr.wkbLinearRing)
+            ring.AddPoint(ringXleftOrigin, ringYtop)
+            ring.AddPoint(ringXrightOrigin, ringYtop)
+            ring.AddPoint(ringXrightOrigin, ringYbottom)
+            ring.AddPoint(ringXleftOrigin, ringYbottom)
+            ring.AddPoint(ringXleftOrigin, ringYtop)
+            poly = ogr.Geometry(ogr.wkbPolygon)
+            poly.AddGeometry(ring)
+
+            # add new geom to layer
+            outFeature = ogr.Feature(featureDefn)
+            outFeature.SetGeometry(poly)
+            outLayer.CreateFeature(outFeature)
+            outFeature.Destroy
+
+            # new envelope for next poly
+            ringYtop = ringYtop - gridHeight
+            ringYbottom = ringYbottom - gridHeight
+
+        # new envelope for next poly
+        ringXleftOrigin = ringXleftOrigin + gridWidth
+        ringXrightOrigin = ringXrightOrigin + gridWidth
+
+    # Close DataSources
+    outDataSource.Destroy()
+    
+    # update bbox based on new grid
+    bbox = getBbox(gridfn)
+    return bbox
+
+
+def createBuffer(standsfn, bufferfn, Dist=250):
     stands = ogr.Open(standsfn)
     lyrStands = stands.GetLayer()
     shpdriver = ogr.GetDriverByName('ESRI Shapefile')
@@ -52,8 +129,9 @@ def selectCell(gridfn,bufferfn):
         standDict[i] = cellStands
 
     selectedCell = max(standDict, key=lambda x:len(standDict[x]))
+    
     return selectedCell
-def osm2tif(standsfn,bbox):      
+def osm2tif(standsfn,bbox,osmRoadsfn):      
     def reprojectToWGS84(standsfn,standsWGSfn):  # creates 'standsWGS.geojson'
         if os.path.exists(standsWGSfn):
               os.remove(standsWGSfn)
@@ -142,19 +220,18 @@ def osm2tif(standsfn,bbox):
         target_dsSRS.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
         target_ds.SetProjection(target_dsSRS.ExportToWkt())
         
-    def main(standsfn,bbox):
+    def main(standsfn,bbox,osmRoadsfn):
         standsWGSfn = 'standsWGS.geojson'
         osmRoadsGeoJSONfn = 'OSMroads.geojson'
-        osmRoadsTiffn = 'OSMroads.tif'
         reprojectToWGS84(standsfn,standsWGSfn)  # creates 'standsWGS.geojson'
         osmRoadsAPI(standsWGSfn) # creates 'roads.osm'
         osm2geojson(osmRoadsGeoJSONfn) # creates 'osmroads.geojson'
-        geojson2geotiff(costSurfacefn,bbox,osmRoadsGeoJSONfn,osmRoadsTiffn) # creates 'OSMroads.tif'
+        geojson2geotiff(costSurfacefn,bbox,osmRoadsGeoJSONfn,osmRoadsfn) # creates 'OSMroads.tif'
         os.remove('standsWGS.geojson')
         os.remove('OSMroads.osm')
     
     if __name__ == "__main__":
-        main(standsfn,bbox)
+        main(standsfn,bbox,osmRoadsfn)
      
 def getBbox(shpfn):
     ds = ogr.Open(shpfn)
@@ -183,21 +260,13 @@ def bbox2pixelOffset(rasterfn,bbox):
     yoff = pymin-ysize
     return xoff,yoff,xsize,ysize,pixelWidth,pixelHeight #xoff,yoff are the counts from the origion of the raster. xsize (rasterwidth),ysize(rasterheight) are the cols,rows of the raster
     
-def raster2array(rasterfn,standsfn):
+def raster2array(rasterfn,bbox):
     
-    bbox = getBbox(standsfn)
-    xmin,xmax,ymin,ymax = bbox
-    offset = 200.0
-    xmin -= offset
-    xmax += offset
-    ymin -= offset
-    ymax += offset
-    bbox = xmin,xmax,ymin,ymax
-    raster = gdal.Open(rasterfn)
     xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
+    raster = gdal.Open(rasterfn)
     band = raster.GetRasterBand(1)
     array = band.ReadAsArray(xoff, yoff, xsize, ysize)
-    return array, bbox  
+    return array  
         
 def array2raster(newCostSurfacefn,rasterfn,bbox,array):
     xmin,xmax,ymin,ymax = bbox
@@ -237,14 +306,24 @@ def createPath(CostSurfacefn,costSurfaceArray,selectedCell,gridfn):
     return costSurfaceArray
  
     
-def main(standsfn,bufferfn,gridfn,costSurfacefn,osmRoadsfn,newCostSurfacefn):
-    buffer(standsfn, bufferfn) # creates 'buffer_stands.shp'
+def main(standsfn,costSurfacefn,newCostSurfacefn):
+    offsetBbox = 200
+    bbox = createProjectBbox(standsfn,offsetBbox) # creates bbox that extents standsfn bbox by specified offset
+    
+    bufferfn = 'buffer_stands.shp'
+    createBuffer(standsfn, bufferfn) # creates 'buffer_stands.shp'
+
+    gridfn = 'grid1.shp'
+    gridHeight = gridWidth = 100
+    bbox = createGrid(gridfn,bbox,gridHeight,gridWidth) # creates 'grid.shp' and updates bbox based on grid's extent
+
     selectedCell = selectCell(gridfn,bufferfn) # creates string 'selectedCell'
-    costSurfaceArray, bbox = raster2array(costSurfacefn,standsfn) # creates array 'costSurfaceArray' and float 'bbox'
+    costSurfaceArray = raster2array(costSurfacefn,bbox) # creates array 'costSurfaceArray' and float 'bbox'
     
-    osm2tif(standsfn,bbox) # creates 'OSMroads.tif' (existing OSM roads)
+    osmRoadsfn = 'osmRoads.tif'
+    osm2tif(standsfn,bbox,osmRoadsfn) # creates 'OSMroads.tif' (existing OSM roads)
     
-    osmRoadsArray, bbox = raster2array(osmRoadsfn,standsfn) # creates array 'osmRoadsArray' and float 'bbox'
+    osmRoadsArray = raster2array(osmRoadsfn,bbox) # creates array 'osmRoadsArray' and 'bbox'
     costSurfaceArray[osmRoadsArray == 1.0] = 0 # updates array 'costSurfaceArray'    
     costSurfaceArray = createPath(costSurfacefn,costSurfaceArray,selectedCell,gridfn) # updates array 'costSurfaceArray'
     
@@ -254,10 +333,7 @@ def main(standsfn,bufferfn,gridfn,costSurfacefn,osmRoadsfn,newCostSurfacefn):
     
         
 if __name__ == "__main__":
-    standsfn = 'stands.shp'
-    gridfn = 'grid.shp'
-    bufferfn = 'buffer_stands.shp'
-    costSurfacefn = 'slope.tif'
-    osmRoadsfn = 'osmRoads.tif'
+    standsfn = 'stands1.shp'
+    costSurfacefn = 'slope1.tif'
     newCostSurfacefn = 'newCostSurface.tif'
-    main(standsfn,bufferfn,gridfn,costSurfacefn,osmRoadsfn,newCostSurfacefn)
+    main(standsfn,costSurfacefn,newCostSurfacefn)
