@@ -19,6 +19,7 @@ def createGrid(gridfn,bbox,gridHeight,gridWidth):
 
     xmin,xmax,ymin,ymax = bbox
     
+    
     # get rows
     rows = ceil((ymax-ymin)/gridHeight)
     # get columns
@@ -131,7 +132,7 @@ def selectCell(gridfn,bufferfn):
     selectedCell = max(standDict, key=lambda x:len(standDict[x]))
     
     return selectedCell
-def osm2tif(standsfn,bbox,osmRoadsfn):      
+def osm2tif(standsfn,bbox,osmRoadsfn):
     def reprojectToWGS84(standsfn,standsWGSfn):  # creates 'standsWGS.geojson'
         if os.path.exists(standsWGSfn):
               os.remove(standsWGSfn)
@@ -251,6 +252,7 @@ def coord2pixelOffset(rasterfn,x,y):
     return xOffset,yOffset,pixelWidth,pixelHeight
 
 def bbox2pixelOffset(rasterfn,bbox):
+    print rasterfn, bbox
     xmin,xmax,ymin,ymax = bbox
     pxmin,pymin,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmin,ymin)
     pxmax,pymax,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmax,ymax)
@@ -310,10 +312,10 @@ def main(standsfn,costSurfacefn,newCostSurfacefn):
     offsetBbox = 200
     bbox = createProjectBbox(standsfn,offsetBbox) # creates bbox that extents standsfn bbox by specified offset
     
-    bufferfn = 'buffer_stands.shp'
+    bufferfn = 'buffer.shp'
     createBuffer(standsfn, bufferfn) # creates 'buffer_stands.shp'
 
-    gridfn = 'grid1.shp'
+    gridfn = 'grid.shp'
     gridHeight = gridWidth = 100
     bbox = createGrid(gridfn,bbox,gridHeight,gridWidth) # creates 'grid.shp' and updates bbox based on grid's extent
 
@@ -329,11 +331,15 @@ def main(standsfn,costSurfacefn,newCostSurfacefn):
     
     array2raster(newCostSurfacefn,costSurfacefn,bbox,costSurfaceArray) # writes 'costSurfaceArray' to 'newCostSurface.tif'
     
+#   os.remove('buffer_stands.shp')
+#   os.remove('grid.shp')
+#   os.remove('osmRoads.tif')
+    
     
     
         
 if __name__ == "__main__":
-    standsfn = 'stands1.shp'
-    costSurfacefn = 'slope1.tif'
+    standsfn = 'stands.shp'
+    costSurfacefn = 'slope.tif'
     newCostSurfacefn = 'newCostSurface.tif'
     main(standsfn,costSurfacefn,newCostSurfacefn)
