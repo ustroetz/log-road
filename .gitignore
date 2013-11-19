@@ -1,7 +1,4 @@
 *.pyc
-venv/
-Data/
-grass_script/
 *.cache
 *.egg-info
 *.DS_store
