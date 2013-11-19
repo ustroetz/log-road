@@ -252,7 +252,6 @@ def coord2pixelOffset(rasterfn,x,y):
     return xOffset,yOffset,pixelWidth,pixelHeight
 
 def bbox2pixelOffset(rasterfn,bbox):
-    print rasterfn, bbox
     xmin,xmax,ymin,ymax = bbox
     pxmin,pymin,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmin,ymin)
     pxmax,pymax,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmax,ymax)
