@@ -15,10 +15,9 @@ def createProjectBbox(standsfn,offsetBbox):
     bbox = xmin,xmax,ymin,ymax
     return bbox
     
-def createGrid(gridfn,bbox,gridHeight,gridWidth):
+def createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox):
 
     xmin,xmax,ymin,ymax = bbox
-    
     
     # get rows
     rows = ceil((ymax-ymin)/gridHeight)
@@ -78,7 +77,7 @@ def createGrid(gridfn,bbox,gridHeight,gridWidth):
     outDataSource.Destroy()
     
     # update bbox based on new grid
-    bbox = getBbox(gridfn)
+    bbox = createProjectBbox(standsfn,offsetBbox)
     return bbox
 
 
@@ -114,7 +113,7 @@ def selectCell(gridfn,bufferfn,bufferList):
     buffer = ogr.Open(bufferfn)
     lyrBuffer = buffer.GetLayer()
     
-    standDict = {}
+    gridDict = {}
     
     for i in gridList:
         # loop grid
@@ -129,27 +128,35 @@ def selectCell(gridfn,bufferfn,bufferList):
             if geomGrid.Intersects(geomBuffer):
                 cellStands.append(j)
     
-        standDict[i] = cellStands
+        gridDict[i] = cellStands
 
-    selectedCell = max(standDict, key=lambda x:len(standDict[x]))
-    gridList.remove(selectedCell)
+    selectedCell = max(gridDict, key=lambda x:len(gridDict[x]))
+    removeBufferList = gridDict[selectedCell]
+    bufferList = (set(bufferList) - set(removeBufferList))
     
-    return selectedCell
-def osm2tif(standsfn,bbox,osmRoadsfn):
-    def reprojectToWGS84(standsfn,standsWGSfn):  # creates 'standsWGS.geojson'
-        if os.path.exists(standsWGSfn):
-              os.remove(standsWGSfn)
-        command = "ogr2ogr -f GeoJSON -t_srs EPSG:4326 %s %s" %(standsWGSfn, standsfn)
-        os.system(command)
-    
-    def osmRoadsAPI(standsWGSfn):
-        extent =  getBbox(standsWGSfn)
-        bboxCoords = str(extent[0]) + ',' + str(extent[2]) + ',' + str(extent[1]) + ',' + str(extent[3])
+    return selectedCell, bufferList
+def osm2tif(bbox,costSurfacefn,osmRoadsTiffn):
+    def reprojectToWGS84(bbox):  # creates 'standsWGS.geojson'
+        leftbottom = ogr.Geometry(ogr.wkbPoint)
+        leftbottom.AddPoint(bbox[0], bbox[2])
+        righttop = ogr.Geometry(ogr.wkbPoint)
+        righttop.AddPoint(bbox[1], bbox[3])
+        inSpatialRef = osr.SpatialReference()
+        inSpatialRef.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
+        outSpatialRef = osr.SpatialReference()
+        outSpatialRef.ImportFromEPSG(4326)
 
+        coordTransform = osr.CoordinateTransformation(inSpatialRef, outSpatialRef)
+        leftbottom.Transform(coordTransform)
+        righttop.Transform(coordTransform)
+
+        bboxWGS84 = (leftbottom.GetX(), righttop.GetX(),leftbottom.GetY(), righttop.GetY())
+        return bboxWGS84
+    
+    def osmRoadsAPI(bboxWGS84):
+        bboxCoords = str(bboxWGS84[0]) + ',' + str(bboxWGS84[2]) + ',' + str(bboxWGS84[1]) + ',' + str(bboxWGS84[3])
         url = 'http://www.overpass-api.de/api/xapi?way[highway=*][bbox=%s]' % bboxCoords
         osm = requests.get(url)
-
-        # write osm_data to osm file
         file = open(r'OSMroads.osm', 'w')
         file.write(osm.text)
         file.close()
@@ -224,18 +231,16 @@ def osm2tif(standsfn,bbox,osmRoadsfn):
         target_dsSRS.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
         target_ds.SetProjection(target_dsSRS.ExportToWkt())
         
-    def main(standsfn,bbox,osmRoadsfn):
-        standsWGSfn = 'standsWGS.geojson'
+    def main(bbox,costSurfacefn,osmRoadsTiffn):
         osmRoadsGeoJSONfn = 'OSMroads.geojson'
-        reprojectToWGS84(standsfn,standsWGSfn)  # creates 'standsWGS.geojson'
-        osmRoadsAPI(standsWGSfn) # creates 'roads.osm'
+        bboxWGS84 = reprojectToWGS84(bbox)  # reprojects bbox to WGS84
+        osmRoadsAPI(bboxWGS84) # creates 'roads.osm'
         osm2geojson(osmRoadsGeoJSONfn) # creates 'osmroads.geojson'
-        geojson2geotiff(costSurfacefn,bbox,osmRoadsGeoJSONfn,osmRoadsfn) # creates 'OSMroads.tif'
-        os.remove('standsWGS.geojson')
-        os.remove('OSMroads.osm')
+        geojson2geotiff(costSurfacefn,bbox,osmRoadsGeoJSONfn,osmRoadsTiffn) # creates 'OSMroads.tif'
+        #os.remove('OSMroads.osm')
     
     if __name__ == "__main__":
-        main(standsfn,bbox,osmRoadsfn)
+        main(bbox,costSurfacefn,osmRoadsTiffn)
      
 def getBbox(shpfn):
     ds = ogr.Open(shpfn)
@@ -265,7 +270,6 @@ def bbox2pixelOffset(rasterfn,bbox):
     return xoff,yoff,xsize,ysize,pixelWidth,pixelHeight #xoff,yoff are the counts from the origion of the raster. xsize (rasterwidth),ysize(rasterheight) are the cols,rows of the raster
     
 def raster2array(rasterfn,bbox):
-    
     xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
     raster = gdal.Open(rasterfn)
     band = raster.GetRasterBand(1)
@@ -279,8 +283,8 @@ def pixelOffset2coord(rasterfn,xOffset,yOffset):
     originY = geotransform[3] 
     pixelWidth = geotransform[1] 
     pixelHeight = geotransform[5]
-    coordX = originX+pixelWidth*xOffset
-    coordY = originY+pixelHeight*yOffset    
+    coordX = originX+pixelWidth*xOffset 
+    coordY = originY+pixelHeight*yOffset
     return coordX, coordY
     
 def array2raster(newRasterfn,rasterfn,bbox,array):
@@ -310,9 +314,10 @@ def createPath(CostSurfacefn,costSurfaceArray,selectedCell,gridfn):
     selectedCellIndexX,selectedCellIndexY,pixelWidth,pixelHeight = coord2pixelOffset(CostSurfacefn,selectedCellX,selectedCellY)
 
     # get index of existing road (first point that occurs)
-    roadIndexX, roadIndexY = np.where(costSurfaceArray == 0)
+    roadIndexY, roadIndexX = np.where(costSurfaceArray == 0)
+    
     # create path
-    indices, weight = route_through_array(costSurfaceArray, (selectedCellIndexX,selectedCellIndexY), (roadIndexX[0],roadIndexY[0]))
+    indices, weight = route_through_array(costSurfaceArray, (selectedCellIndexY,selectedCellIndexX), (roadIndexY[1],roadIndexX[1]))
     indices = np.array(indices).T
     path = np.zeros_like(costSurfaceArray)
     path[indices[0], indices[1]] = 1
@@ -321,34 +326,34 @@ def createPath(CostSurfacefn,costSurfaceArray,selectedCell,gridfn):
     costSurfaceArray[path == 1] = 0
     return costSurfaceArray
 
-def tif2shp(costSurfacefn,bbox,array,outSHPfn):
-   
-    # update array to set No_data value
-    array[array != 0] = 9999
-    array[array == 0] = 1
+def array2shp(array,outSHPfn,OSMCostSurfacefn):
     
-    # array2tif
-    FinalCostSurfacefn = 'FinalCostSurface.tif'
-    array2raster(FinalCostSurfacefn,costSurfacefn,bbox,array) # writes 'costSurfaceArray' to 'FinalCostSurface.tif'
-    raster = gdal.Open(FinalCostSurfacefn)
-    band = raster.GetRasterBand(1)
-        
-    #create new shp file
-    newSHPfn = 'intermediate.shp'
+    count = 0
+    roadList = np.where(array == 0)
+    multipoint = ogr.Geometry(ogr.wkbMultiPoint)
+    for indexY in roadList[0]:
+        indexX = roadList[1][count]
+        Xcoord, Ycoord = pixelOffset2coord(OSMCostSurfacefn,indexX,indexY)
+        roadPoint = ogr.Geometry(ogr.wkbPoint)
+        roadPoint.AddPoint(Xcoord, Ycoord)
+        multipoint.AddGeometry(roadPoint)
+        count += 1
+    
     shpDriver = ogr.GetDriverByName("ESRI Shapefile")
-    if os.path.exists(newSHPfn):
-        shpDriver.DeleteDataSource(newSHPfn)
-    outDataSource = shpDriver.CreateDataSource(newSHPfn)
-    outLayer = outDataSource.CreateLayer(newSHPfn, geom_type=ogr.wkbPolygon )
+    if os.path.exists(outSHPfn):
+        shpDriver.DeleteDataSource(outSHPfn)
+    outDataSource = shpDriver.CreateDataSource(outSHPfn)
+    outLayer = outDataSource.CreateLayer(outSHPfn, geom_type=ogr.wkbMultiPoint )
+    featureDefn = outLayer.GetLayerDefn()
+    outFeature = ogr.Feature(featureDefn)
+    outFeature.SetGeometry(multipoint)
+    outLayer.CreateFeature(outFeature)
     
-    # polygonize
-    gdal.Polygonize(band, None, outLayer, -1) 
-    
-def RemoveBuffer(bufferfn,rasterfn,costSurfaceArray):
+            
+def RemoveBuffer(bufferfn,bufferList,rasterfn,costSurfaceArray):
 
     standsBuffer = ogr.Open(bufferfn)
     lyrStandsBuffer = standsBuffer.GetLayer()
-    bufferList = range(lyrStandsBuffer.GetFeatureCount())
     
     # create list of costSurfaceArray value = 0
     roadList = np.where(costSurfaceArray == 0)
@@ -363,8 +368,8 @@ def RemoveBuffer(bufferfn,rasterfn,costSurfaceArray):
         geomBuffer = featureBuffer.GetGeometryRef()      
 
         count = 0
-        for indexX in roadList[0]:
-            indexY = roadList[1][count]
+        for indexY in roadList[0]:
+            indexX = roadList[1][count]
             Xcoord, Ycoord = pixelOffset2coord(rasterfn,indexX,indexY)
             roadPoint = ogr.Geometry(ogr.wkbPoint)
             roadPoint.AddPoint(Xcoord, Ycoord)
@@ -380,42 +385,44 @@ def RemoveBuffer(bufferfn,rasterfn,costSurfaceArray):
     return bufferList
     
 def main(standsfn,costSurfacefn,newCostSurfacefn):
-    offsetBbox = 200
+    offsetBbox = 50
     bbox = createProjectBbox(standsfn,offsetBbox) # creates bbox that extents standsfn bbox by specified offset
     
     bufferfn = 'buffer.shp'
     bufferList = createBuffer(standsfn, bufferfn) # creates 'buffer_stands.shp' and list of buffer features
+    print bufferList
 
     gridfn = 'grid.shp'
     gridHeight = gridWidth = 100
-    bbox = createGrid(gridfn,bbox,gridHeight,gridWidth) # creates 'grid.shp' and updates bbox based on grid's extent
+    bbox = createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox) # creates 'grid.shp' and updates bbox based on grid's extent
     
     costSurfaceArray = raster2array(costSurfacefn,bbox) # creates array 'costSurfaceArray' and float 'bbox'
     
-    osmRoadsfn = 'osmRoads.tif'
-    osm2tif(standsfn,bbox,osmRoadsfn) # creates 'OSMroads.tif' (existing OSM roads)    
-    osmRoadsArray = raster2array(osmRoadsfn,bbox) # creates array 'osmRoadsArray' and 'bbox'
-    
+    osmRoadsTiffn = 'osmRoads.tif'
+    osm2tif(bbox,costSurfacefn,osmRoadsTiffn) # creates 'OSMroads.tif' (existing OSM roads)    
+    osmRoadsArray = raster2array(osmRoadsTiffn,bbox) # creates array 'osmRoadsArray' and 'bbox'
     costSurfaceArray[osmRoadsArray == 1.0] = 0 # updates array 'costSurfaceArray'  
-    
     OSMCostSurfacefn = 'OSMCostSurface.tif'
     array2raster(OSMCostSurfacefn,costSurfacefn,bbox,costSurfaceArray) # writes costSurfaceArray to 'OSMCostSurface.tif'
     
-    bufferList = RemoveBuffer(bufferfn,OSMCostSurfacefn,costSurfaceArray) # removes buffers touching OSM roads
-    
+    bufferList = RemoveBuffer(bufferfn,bufferList,OSMCostSurfacefn,costSurfaceArray) # removes buffers touching OSM roads
+    print bufferList
+
     while len(bufferList) > 0:
         
-        selectedCell = selectCell(gridfn,bufferfn,bufferList) # creates string 'selectedCell'
-        print 'selected cell:', selectedCell
-        
-        costSurfaceArray = createPath(costSurfacefn,costSurfaceArray,selectedCell,gridfn) # updates array 'costSurfaceArray'
-                
-        bufferList = RemoveBuffer(bufferfn,OSMCostSurfacefn,costSurfaceArray) # removes buffers touching new road
-        print 'buffers left: ',len(bufferList)        
+        selectedCell, bufferList = selectCell(gridfn,bufferfn,bufferList) # creates string 'selectedCell'
+        print 'selectedCell', selectedCell
         print bufferList
+        costSurfaceArray = createPath(OSMCostSurfacefn,costSurfaceArray,selectedCell,gridfn) # updates array 'costSurfaceArray'
+          
+        bufferList = RemoveBuffer(bufferfn,bufferList,OSMCostSurfacefn,costSurfaceArray) # removes buffers touching new road
+        print bufferList
+        
+        costSurfaceArray[costSurfaceArray != 0] = 9999
+        outSHPfn = 'Roads.shp'
+        array2shp(costSurfaceArray,outSHPfn,OSMCostSurfacefn) # writes final roads in shapefile
+    
 
-    outSHPfn = 'Roads.shp'
-    tif2shp(costSurfacefn,bbox,costSurfaceArray,outSHPfn) # writes final roads in shapefile
     
 #   os.remove('buffer_stands.shp')
 #   os.remove('grid.shp')
@@ -425,7 +432,7 @@ def main(standsfn,costSurfacefn,newCostSurfacefn):
     
         
 if __name__ == "__main__":
-    standsfn = 'stands1.shp'
-    costSurfacefn = 'slope1.tif'
+    standsfn = 'stands.shp'
+    costSurfacefn = '/Volumes/GIS/Basedata/PNW/terrain/slope'
     newCostSurfacefn = 'newCostSurface.tif'
     main(standsfn,costSurfacefn,newCostSurfacefn)
