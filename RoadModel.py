@@ -3,18 +3,30 @@ import os
 import numpy as np
 from skimage.graph import route_through_array
 import requests
-from math import ceil
+from math import ceil, sqrt
 
-def createProjectBbox(standsfn,offsetBbox):
-    bbox = getBbox(standsfn)
+def bbox2pixelOffset(rasterfn,bbox):
     xmin,xmax,ymin,ymax = bbox
-    xmin -= offsetBbox
-    xmax += offsetBbox
-    ymin -= offsetBbox
-    ymax += offsetBbox
-    bbox = xmin,xmax,ymin,ymax
-    return bbox
-    
+    pxmin,pymin,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmin,ymin)
+    pxmax,pymax,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmax,ymax)
+    xsize = abs(pxmax - pxmin)
+    ysize = abs(pymax - pymin)
+    xoff = pxmin
+    yoff = pymin-ysize
+    return xoff,yoff,xsize,ysize,pixelWidth,pixelHeight #xoff,yoff are the counts from the origion of the raster. xsize (rasterwidth),ysize(rasterheight) are the cols,rows of the raster
+
+def coord2pixelOffset(rasterfn,x,y):
+    raster = gdal.Open(rasterfn)
+    geotransform = raster.GetGeoTransform()
+    originX = geotransform[0]
+    originY = geotransform[3] 
+    pixelWidth = geotransform[1] 
+    pixelHeight = geotransform[5]
+    xOffset = int((x - originX)/pixelWidth)
+    yOffset = int((y - originY)/pixelHeight)
+    return xOffset,yOffset,pixelWidth,pixelHeight
+
+        
 def createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox):
 
     xmin,xmax,ymin,ymax = bbox
@@ -104,6 +116,160 @@ def createBuffer(standsfn, bufferfn, Dist=1):
         
     bufferList = range(lyrStandsBuffer.GetFeatureCount())
     return bufferList
+def createPath(CostSurfacefn,costSurfaceArray,selectedCell,gridfn):   
+    # get index of selected cell
+    grid = ogr.Open(gridfn)
+    lyrGrid = grid.GetLayer()
+    featSelectedCell = lyrGrid.GetFeature(selectedCell)
+    geomSelectedCell = featSelectedCell.GetGeometryRef()
+    centroidSelectedCell = geomSelectedCell.Centroid()
+    selectedCellX = centroidSelectedCell.GetX()
+    selectedCellY = centroidSelectedCell.GetY()
+    selectedCellIndexX,selectedCellIndexY,pixelWidth,pixelHeight = coord2pixelOffset(CostSurfacefn,selectedCellX,selectedCellY)
+    
+    # get index of existing road (first point that occurs)
+    StraightLineDict = {}
+    count = 0
+    roadIndexY, roadIndexX = np.where(costSurfaceArray == 0)
+    while count < len(roadIndexY):
+        dist =  sqrt((selectedCellIndexY-roadIndexY[count])**2+(selectedCellIndexX-roadIndexX[count])**2)
+        index = (roadIndexY[count],roadIndexX[count])        
+        StraightLineDict[index] = dist
+        count +=1
+        
+    roadIndex = min(StraightLineDict, key=StraightLineDict.get)
+
+    # create path
+    indices, weight = route_through_array(costSurfaceArray, (selectedCellIndexY,selectedCellIndexX), roadIndex)
+    indices = np.array(indices).T
+    path = np.zeros_like(costSurfaceArray)
+    path[indices[0], indices[1]] = 1
+    
+    # merge path with existing roads
+    costSurfaceArray[path == 1] = 0
+    return costSurfaceArray
+
+def createProjectBbox(standsfn,offsetBbox):
+    bbox = getBbox(standsfn)
+    xmin,xmax,ymin,ymax = bbox
+    xmin -= offsetBbox
+    xmax += offsetBbox
+    ymin -= offsetBbox
+    ymax += offsetBbox
+    bbox = xmin,xmax,ymin,ymax
+    return bbox    
+    
+def getBbox(shpfn):
+    ds = ogr.Open(shpfn)
+    lyr = ds.GetLayer()
+    bbox = lyr.GetExtent()
+    return bbox
+
+def osm2tif(bbox,costSurfacefn,osmRoadsTiffn):
+    def reprojectToWGS84(bbox):  
+        leftbottom = ogr.Geometry(ogr.wkbPoint)
+        leftbottom.AddPoint(bbox[0], bbox[2])
+        righttop = ogr.Geometry(ogr.wkbPoint)
+        righttop.AddPoint(bbox[1], bbox[3])
+        inSpatialRef = osr.SpatialReference()
+        inSpatialRef.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
+        outSpatialRef = osr.SpatialReference()
+        outSpatialRef.ImportFromEPSG(4326)
+
+        coordTransform = osr.CoordinateTransformation(inSpatialRef, outSpatialRef)
+        leftbottom.Transform(coordTransform)
+        righttop.Transform(coordTransform)
+
+        bboxWGS84 = (leftbottom.GetX(), righttop.GetX(),leftbottom.GetY(), righttop.GetY())
+        return bboxWGS84
+    
+    def osmRoadsAPI(bboxWGS84):
+        bboxCoords = str(bboxWGS84[0]) + ',' + str(bboxWGS84[2]) + ',' + str(bboxWGS84[1]) + ',' + str(bboxWGS84[3])
+        url = 'http://www.overpass-api.de/api/xapi?way[highway=*][bbox=%s]' % bboxCoords
+        osm = requests.get(url)
+        file = open(r'OSMroads.osm', 'w')
+        file.write(osm.text)
+        file.close()
+
+    def osm2shp(osmRoadsSHPfn):
+        roadsDs = ogr.Open('OSMroads.osm')
+        inLayer = roadsDs.GetLayer(1) # layer 1 for ways
+
+        outDriver = ogr.GetDriverByName('ESRI Shapefile')
+    
+        if os.path.exists(osmRoadsSHPfn):
+            outDriver.DeleteDataSource(osmRoadsSHPfn)
+
+        outDataSource = outDriver.CreateDataSource(osmRoadsSHPfn)
+        outLayer = outDataSource.CreateLayer(osmRoadsSHPfn, geom_type=ogr.wkbLineString )
+
+        # create the input SpatialReference
+        sourceSR = inLayer.GetSpatialRef()
+
+        # create the output SpatialReference
+        targetSR = osr.SpatialReference()
+        targetSR.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
+
+        # create transform
+        coordTrans = osr.CoordinateTransformation(sourceSR,targetSR)
+
+        # Get the output Layer's Feature Definition
+        featureDefn = outLayer.GetLayerDefn()
+
+        # loop through the input features
+        inFeature = inLayer.GetNextFeature()
+        while inFeature:
+
+            # get the input geometry
+            geom = inFeature.GetGeometryRef()
+            # reproject the geometry
+            geom.Transform(coordTrans)
+        
+            # create a new feature
+            outFeature = ogr.Feature(featureDefn)
+
+            # set new geometry
+            outFeature.SetGeometry(geom)
+            
+            # Add new feature to output Layer
+            outLayer.CreateFeature(outFeature)
+
+            # destroy the features and get the next input feature
+            inFeature = inLayer.GetNextFeature()
+
+        # Close DataSources
+        roadsDs = None
+        outDataSource = None
+
+    def shp2geotiff(rasterfn,bbox,osmRoadsSHPfn,osmRoadsTiffn):    
+        xmin,xmax,ymin,ymax = bbox
+        xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
+    
+        source_ds = ogr.Open(osmRoadsSHPfn)
+        source_layer = source_ds.GetLayer()
+    
+        target_ds = gdal.GetDriverByName('GTiff').Create(osmRoadsTiffn, xsize, ysize, gdal.GDT_Byte)
+        target_ds.SetGeoTransform((xmin, pixelWidth, 0, ymax, 0, pixelHeight))
+        band = target_ds.GetRasterBand(1)
+        NoData_value = 255
+        band.SetNoDataValue(NoData_value)
+        band.FlushCache()        
+        gdal.RasterizeLayer(target_ds, [1], source_layer, burn_values=[1])   
+
+        target_dsSRS = osr.SpatialReference()
+        target_dsSRS.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
+        target_ds.SetProjection(target_dsSRS.ExportToWkt())
+        
+    def main(bbox,costSurfacefn,osmRoadsTiffn):
+        osmRoadsSHPfn = 'OSMroads.shp'
+        bboxWGS84 = reprojectToWGS84(bbox)  # reprojects bbox to WGS84
+        #osmRoadsAPI(bboxWGS84) # creates 'roads.osm'
+        osm2shp(osmRoadsSHPfn) # creates 'osmroads.shp'
+        shp2geotiff(costSurfacefn,bbox,osmRoadsSHPfn,osmRoadsTiffn) # creates 'OSMroads.tif'
+        #os.remove('OSMroads.osm')
+    
+    if __name__ == "__main__":
+        main(bbox,costSurfacefn,osmRoadsTiffn)
 
 def selectCell(gridfn,bufferfn,bufferList):
     grid = ogr.Open(gridfn)
@@ -135,118 +301,6 @@ def selectCell(gridfn,bufferfn,bufferList):
     bufferList = (set(bufferList) - set(removeBufferList))
     
     return selectedCell, bufferList
-def osm2tif(bbox,costSurfacefn,osmRoadsTiffn):
-    def reprojectToWGS84(bbox):  # creates 'standsWGS.geojson'
-        leftbottom = ogr.Geometry(ogr.wkbPoint)
-        leftbottom.AddPoint(bbox[0], bbox[2])
-        righttop = ogr.Geometry(ogr.wkbPoint)
-        righttop.AddPoint(bbox[1], bbox[3])
-        inSpatialRef = osr.SpatialReference()
-        inSpatialRef.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
-        outSpatialRef = osr.SpatialReference()
-        outSpatialRef.ImportFromEPSG(4326)
-
-        coordTransform = osr.CoordinateTransformation(inSpatialRef, outSpatialRef)
-        leftbottom.Transform(coordTransform)
-        righttop.Transform(coordTransform)
-
-        bboxWGS84 = (leftbottom.GetX(), righttop.GetX(),leftbottom.GetY(), righttop.GetY())
-        return bboxWGS84
-    
-    def osmRoadsAPI(bboxWGS84):
-        bboxCoords = str(bboxWGS84[0]) + ',' + str(bboxWGS84[2]) + ',' + str(bboxWGS84[1]) + ',' + str(bboxWGS84[3])
-        url = 'http://www.overpass-api.de/api/xapi?way[highway=*][bbox=%s]' % bboxCoords
-        osm = requests.get(url)
-        file = open(r'OSMroads.osm', 'w')
-        file.write(osm.text)
-        file.close()
-
-    def osm2geojson(osmRoadsGeoJSONfn):
-        roadsDs = ogr.Open('OSMroads.osm')
-        inLayer = roadsDs.GetLayer(1) # layer 1 for ways
-
-        outDriver = ogr.GetDriverByName('GeoJSON')
-    
-        if os.path.exists(osmRoadsGeoJSONfn):
-            outDriver.DeleteDataSource(osmRoadsGeoJSONfn)
-
-        outDataSource = outDriver.CreateDataSource(osmRoadsGeoJSONfn)
-        outLayer = outDataSource.CreateLayer(osmRoadsGeoJSONfn, geom_type=ogr.wkbLineString )
-
-        # create the input SpatialReference
-        sourceSR = inLayer.GetSpatialRef()
-
-        # create the output SpatialReference
-        targetSR = osr.SpatialReference()
-        targetSR.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
-
-        # create transform
-        coordTrans = osr.CoordinateTransformation(sourceSR,targetSR)
-
-        # Get the output Layer's Feature Definition
-        featureDefn = outLayer.GetLayerDefn()
-
-        # loop through the input features
-        inFeature = inLayer.GetNextFeature()
-        while inFeature:
-
-            # get the input geometry
-            geom = inFeature.GetGeometryRef()
-            # reproject the geometry
-            geom.Transform(coordTrans)
-        
-            # create a new feature
-            outFeature = ogr.Feature(featureDefn)
-
-            # set new geometry
-            outFeature.SetGeometry(geom)
-            # Add new feature to output Layer
-            outLayer.CreateFeature(outFeature)
-
-            # destroy the features and get the next input feature
-            outFeature.Destroy
-            inFeature.Destroy
-            inFeature = inLayer.GetNextFeature()
-
-        # Close DataSources
-        roadsDs.Destroy()
-        outDataSource.Destroy()
-
-    def geojson2geotiff(rasterfn,bbox,osmRoadsGeoJSONfn,osmRoadsTiffn):    
-        xmin,xmax,ymin,ymax = bbox
-        xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
-    
-        source_ds = ogr.Open(osmRoadsGeoJSONfn)
-        source_layer = source_ds.GetLayer()
-    
-        target_ds = gdal.GetDriverByName('GTiff').Create(osmRoadsTiffn, xsize, ysize, gdal.GDT_Byte)
-        target_ds.SetGeoTransform((xmin, pixelWidth, 0, ymax, 0, pixelHeight))
-        band = target_ds.GetRasterBand(1)
-        NoData_value = 255
-        band.SetNoDataValue(NoData_value)
-        band.FlushCache()
-        gdal.RasterizeLayer(target_ds, [1], source_layer, burn_values=[1])   
-
-        target_dsSRS = osr.SpatialReference()
-        target_dsSRS.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
-        target_ds.SetProjection(target_dsSRS.ExportToWkt())
-        
-    def main(bbox,costSurfacefn,osmRoadsTiffn):
-        osmRoadsGeoJSONfn = 'OSMroads.geojson'
-        bboxWGS84 = reprojectToWGS84(bbox)  # reprojects bbox to WGS84
-        osmRoadsAPI(bboxWGS84) # creates 'roads.osm'
-        osm2geojson(osmRoadsGeoJSONfn) # creates 'osmroads.geojson'
-        geojson2geotiff(costSurfacefn,bbox,osmRoadsGeoJSONfn,osmRoadsTiffn) # creates 'OSMroads.tif'
-        #os.remove('OSMroads.osm')
-    
-    if __name__ == "__main__":
-        main(bbox,costSurfacefn,osmRoadsTiffn)
-     
-def getBbox(shpfn):
-    ds = ogr.Open(shpfn)
-    lyr = ds.GetLayer()
-    bbox = lyr.GetExtent()
-    return bbox
 
 def coord2pixelOffset(rasterfn,x,y):
     raster = gdal.Open(rasterfn)
@@ -259,22 +313,6 @@ def coord2pixelOffset(rasterfn,x,y):
     yOffset = int((y - originY)/pixelHeight)
     return xOffset,yOffset,pixelWidth,pixelHeight
 
-def bbox2pixelOffset(rasterfn,bbox):
-    xmin,xmax,ymin,ymax = bbox
-    pxmin,pymin,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmin,ymin)
-    pxmax,pymax,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmax,ymax)
-    xsize = abs(pxmax - pxmin)
-    ysize = abs(pymax - pymin)
-    xoff = pxmin
-    yoff = pymin-ysize
-    return xoff,yoff,xsize,ysize,pixelWidth,pixelHeight #xoff,yoff are the counts from the origion of the raster. xsize (rasterwidth),ysize(rasterheight) are the cols,rows of the raster
-    
-def raster2array(rasterfn,bbox):
-    xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
-    raster = gdal.Open(rasterfn)
-    band = raster.GetRasterBand(1)
-    array = band.ReadAsArray(xoff, yoff, xsize, ysize)
-    return array  
 
 def pixelOffset2coord(rasterfn,xOffset,yOffset):
     raster = gdal.Open(rasterfn)
@@ -286,7 +324,15 @@ def pixelOffset2coord(rasterfn,xOffset,yOffset):
     coordX = originX+pixelWidth*xOffset 
     coordY = originY+pixelHeight*yOffset
     return coordX, coordY
-    
+
+def raster2array(rasterfn,bbox):
+    xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
+    raster = gdal.Open(rasterfn)
+    band = raster.GetRasterBand(1)
+    array = band.ReadAsArray(xoff, yoff, xsize, ysize)
+    return array  
+
+  
 def array2raster(newRasterfn,rasterfn,bbox,array):
     xmin,xmax,ymin,ymax = bbox
     xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
@@ -302,29 +348,7 @@ def array2raster(newRasterfn,rasterfn,bbox,array):
     outRaster.SetProjection(outRasterSRS.ExportToWkt())
     outband.FlushCache()
         
-def createPath(CostSurfacefn,costSurfaceArray,selectedCell,gridfn):   
-    # get index of selected cell
-    grid = ogr.Open(gridfn)
-    lyrGrid = grid.GetLayer()
-    featSelectedCell = lyrGrid.GetFeature(selectedCell)
-    geomSelectedCell = featSelectedCell.GetGeometryRef()
-    centroidSelectedCell = geomSelectedCell.Centroid()
-    selectedCellX = centroidSelectedCell.GetX()
-    selectedCellY = centroidSelectedCell.GetY()
-    selectedCellIndexX,selectedCellIndexY,pixelWidth,pixelHeight = coord2pixelOffset(CostSurfacefn,selectedCellX,selectedCellY)
 
-    # get index of existing road (first point that occurs)
-    roadIndexY, roadIndexX = np.where(costSurfaceArray == 0)
-    
-    # create path
-    indices, weight = route_through_array(costSurfaceArray, (selectedCellIndexY,selectedCellIndexX), (roadIndexY[1],roadIndexX[1]))
-    indices = np.array(indices).T
-    path = np.zeros_like(costSurfaceArray)
-    path[indices[0], indices[1]] = 1
-    
-    # merge path with existing roads
-    costSurfaceArray[path == 1] = 0
-    return costSurfaceArray
 
 def array2shp(array,outSHPfn,OSMCostSurfacefn):
     
@@ -384,8 +408,8 @@ def RemoveBuffer(bufferfn,bufferList,rasterfn,costSurfaceArray):
     bufferList = (set(bufferList) - set(removeBufferList))
     return bufferList
     
-def main(standsfn,costSurfacefn,newCostSurfacefn):
-    offsetBbox = 50
+def main(standsfn,costSurfacefn,newCostSurfacefn,gridHeight,gridWidth):
+    offsetBbox = 20
     bbox = createProjectBbox(standsfn,offsetBbox) # creates bbox that extents standsfn bbox by specified offset
     
     bufferfn = 'buffer.shp'
@@ -393,12 +417,11 @@ def main(standsfn,costSurfacefn,newCostSurfacefn):
     print bufferList
 
     gridfn = 'grid.shp'
-    gridHeight = gridWidth = 100
     bbox = createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox) # creates 'grid.shp' and updates bbox based on grid's extent
     
     costSurfaceArray = raster2array(costSurfacefn,bbox) # creates array 'costSurfaceArray' and float 'bbox'
     
-    osmRoadsTiffn = 'osmRoads.tif'
+    osmRoadsTiffn = 'OSMRoads.tif'
     osm2tif(bbox,costSurfacefn,osmRoadsTiffn) # creates 'OSMroads.tif' (existing OSM roads)    
     osmRoadsArray = raster2array(osmRoadsTiffn,bbox) # creates array 'osmRoadsArray' and 'bbox'
     costSurfaceArray[osmRoadsArray == 1.0] = 0 # updates array 'costSurfaceArray'  
@@ -413,26 +436,23 @@ def main(standsfn,costSurfacefn,newCostSurfacefn):
         selectedCell, bufferList = selectCell(gridfn,bufferfn,bufferList) # creates string 'selectedCell'
         print 'selectedCell', selectedCell
         print bufferList
+        
         costSurfaceArray = createPath(OSMCostSurfacefn,costSurfaceArray,selectedCell,gridfn) # updates array 'costSurfaceArray'
-          
+
         bufferList = RemoveBuffer(bufferfn,bufferList,OSMCostSurfacefn,costSurfaceArray) # removes buffers touching new road
         print bufferList
-        
         costSurfaceArray[costSurfaceArray != 0] = 9999
         outSHPfn = 'Roads.shp'
         array2shp(costSurfaceArray,outSHPfn,OSMCostSurfacefn) # writes final roads in shapefile
-    
+        quit()
+        
 
-    
-#   os.remove('buffer_stands.shp')
-#   os.remove('grid.shp')
-#   os.remove('osmRoads.tif')
-    
-    
     
         
 if __name__ == "__main__":
-    standsfn = 'stands.shp'
+    standsfn = 'stands1.shp'
     costSurfacefn = '/Volumes/GIS/Basedata/PNW/terrain/slope'
+    gridHeight = gridWidth = 9.08267698676  # 9.08267698676
+    
     newCostSurfacefn = 'newCostSurface.tif'
-    main(standsfn,costSurfacefn,newCostSurfacefn)
+    main(standsfn,costSurfacefn,newCostSurfacefn,gridHeight,gridWidth)
