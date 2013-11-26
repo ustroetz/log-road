@@ -490,7 +490,7 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=100):
         
 if __name__ == "__main__":
     standsfn = 'stands2.shp'
-    costSurfacefn = '/Volumes/GIS/Basedata/PNW/terrain/slope'
+    costSurfacefn = 'CostSurface.tif'  #'/Volumes/GIS/Basedata/PNW/terrain/slope'
     newRoadsfn = 'newRoads.shp'
     
     main(standsfn,costSurfacefn,newRoadsfn)

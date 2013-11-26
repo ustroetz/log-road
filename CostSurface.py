@@ -48,7 +48,6 @@ def array2raster(newRasterfn,rasterfn,costSurfaceArray):
     outRaster = driver.Create(newRasterfn, cols, rows, gdal.GDT_Byte)
     outRaster.SetGeoTransform((originX, pixelWidth, 0, originY, 0, pixelHeight))
     outband = outRaster.GetRasterBand(1)
-    outband.SetNoDataValue(9999)
     outband.WriteArray(costSurfaceArray)
     outRasterSRS = osr.SpatialReference()
     outRasterSRS.ImportFromWkt(raster.GetProjectionRef())
@@ -69,12 +68,13 @@ def main(baseRasterfn,CostSurfacefn,dataDict):
 
         array = raster2array(fn) # raster2array
         array = array*updateValue # update array by value
-        costSurfaceArray += array
         
+        costSurfaceArray += array
+              
     array2raster(CostSurfacefn,baseRasterfn,costSurfaceArray)
     
 if __name__ == "__main__":
     baseRasterfn = 'baseSurface.tif'
     CostSurfacefn = 'CostSurface.tif'
-    dataDict = {'baseSurface.tif':1, 'test2.shp':99}
+    dataDict = {'baseSurface.tif':0, 'test.shp':300}
     main(baseRasterfn, CostSurfacefn, dataDict)
