@@ -76,5 +76,5 @@ def main(baseRasterfn,CostSurfacefn,dataDict):
 if __name__ == "__main__":
     baseRasterfn = 'baseSurface.tif'
     CostSurfacefn = 'CostSurface.tif'
-    dataDict = {'baseSurface.tif':0, 'test.shp':300}
+    dataDict = {'baseSurface.tif':1, 'test.shp':100}
     main(baseRasterfn, CostSurfacefn, dataDict)
