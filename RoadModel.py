@@ -475,14 +475,12 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=100):
         
         selectedCell, bufferList = selectCell(gridfn,bufferfn,bufferList) # creates string 'selectedCell'
         print 'Selected cell: ', selectedCell
-        
+
         costSurfaceArray = createPath(newCostSurfacefn,costSurfaceArray,selectedCell,gridfn) # updates array 'costSurfaceArray'
 
         bufferList = removeBuffer(bufferfn,bufferList,newCostSurfacefn,costSurfaceArray) # removes buffers touching new road
         print "Buffers without new roads: ", bufferList
         
-        costSurfaceArray[costSurfaceArray != 0] = 9999 # updates array 'costSurfaceArray'
-
     array2shp(costSurfaceArray,newRoadsfn,newCostSurfacefn) # writes final roads in shapefile
         
 
