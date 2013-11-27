@@ -16,7 +16,7 @@ def cellID2cellIndex(selectedCell,gridfn,CostSurfacefn):
     selectedCellY = centroidSelectedCell.GetY()
     selectedCellIndexX,selectedCellIndexY,pixelWidth,pixelHeight = coord2pixelOffset(CostSurfacefn,selectedCellX,selectedCellY)
     return selectedCellIndexX,selectedCellIndexY
-    
+   
 def array2raster(newRasterfn,rasterfn,bbox,array):
     xmin,xmax,ymin,ymax = bbox
     xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
@@ -380,10 +380,9 @@ def osm2tif(bbox,costSurfacefn,osmRoadsTiffn):
     def main(bbox,costSurfacefn,osmRoadsTiffn):
         osmRoadsSHPfn = 'OSMroads.shp'
         bboxWGS84 = reprojectToWGS84(bbox)  # reprojects bbox to WGS84
-        #osmRoadsAPI(bboxWGS84) # creates 'roads.osm'
+        osmRoadsAPI(bboxWGS84) # creates 'roads.osm'
         osm2shp(osmRoadsSHPfn) # creates 'osmroads.shp'
         shp2geotiff(costSurfacefn,bbox,osmRoadsSHPfn,osmRoadsTiffn) # creates 'OSMroads.tif'
-        #os.remove('OSMroads.osm')
     
     if __name__ == "__main__":
         main(bbox,costSurfacefn,osmRoadsTiffn)
@@ -399,6 +398,15 @@ def pixelOffset2coord(rasterfn,xOffset,yOffset):
     coordY = originY+pixelHeight*yOffset
     return coordX, coordY
 
+
+
+def printList(myDict):
+    myList = []
+    for item in myDict:
+        for jtem in myDict[item]:
+            if jtem not in myList:
+                myList.append(jtem)
+    print myList
 def raster2array(rasterfn,bbox):
     xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
     raster = gdal.Open(rasterfn)
@@ -448,36 +456,62 @@ def removeBuffer(bufferfn,gridDict,rasterfn,costSurfaceArray):
     gridDict = {i: cellStands for i, cellStands in gridDict.items() if cellStands}        
     return gridDict
 
-def selectCell(gridfn,bufferfn,gridDict):
+def selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,rasterfn):
 
     selectedCell = max(gridDict, key=lambda x:len(gridDict[x]))
     
-    # # in case stands don't intersect
-    # if len(gridDict[selectedCell]) == 1:
-    #     roadIndexY, roadIndexX = np.where(costSurfaceArray == 0)
-    #     for cell in gridDict:
-    #         selectedCellIndexX,selectedCellIndexY = cellID2cellIndex(cell,gridfn,CostSurfacefn)
-    #         while count < len(roadIndexY):
-    #             dist =  sqrt((selectedCellIndexY-roadIndexY[count])**2+(selectedCellIndexX-roadIndexX[count])**2)
-    #             index = (roadIndexY[count],roadIndexX[count])        
-    #             StraightLineDict[index,cell] = dist
-    #             count +=1
-    #     roadIndexCellID = min(StraightLineDict, key=StraightLineDict.get)
-    #     selectedCell = roadIndexCellID[1]
-    #     print selectedCell   
-     
+    # in case stands don't intersect
+    if len(gridDict[selectedCell]) == 1:
+        # find closest cell of selected buffer to road
+
+        # find closest road to centroid of buffer
+        standsBuffer = ogr.Open(bufferfn)
+        lyrStandsBuffer = standsBuffer.GetLayer()
+        featureBuffer = lyrStandsBuffer.GetFeature(gridDict[selectedCell][0])
+        geomBuffer = featureBuffer.GetGeometryRef()
+        centroidBuffer = geomBuffer.Centroid()
+        bufferX = centroidBuffer.GetX()
+        bufferY = centroidBuffer.GetY()
+        bufferIndexX,bufferIndexY,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,bufferX,bufferY)
+        
+        roadIndexY, roadIndexX = np.where(costSurfaceArray == 0)
+        count = 0
+        StraightLineDict = {}
+        while count < len(roadIndexY):
+            dist =  sqrt((bufferIndexY-roadIndexY[count])**2+(bufferIndexX-roadIndexX[count])**2)
+            index = (roadIndexX[count],roadIndexY[count])        
+            StraightLineDict[index] = dist
+            count +=1
+        selectedRoadIndex = min(StraightLineDict, key=StraightLineDict.get)
+        selectedRoadCoordX, selectedRoadCoordY = pixelOffset2coord(rasterfn,selectedRoadIndex[0],selectedRoadIndex[1])
+        selectedRoadCoord = ogr.Geometry(ogr.wkbPoint)
+        selectedRoadCoord.AddPoint(selectedRoadCoordX, selectedRoadCoordY)
+        
+        # find closest cell to selected road 
+        gridDs = ogr.Open(gridfn)
+        lyrGrid = gridDs.GetLayer()
+        subGridDict = {}
+        for cell in gridDict:
+            if (gridDict[cell][0] == gridDict[selectedCell][0]):
+                featureCell = lyrGrid.GetFeature(gridDict[cell][0])
+                geomCell = featureCell.GetGeometryRef()
+                centroidCell = geomCell.Centroid()
+                cellX = centroidCell.GetX()
+                cellY = centroidCell.GetY()
+                cellCoords = ogr.Geometry(ogr.wkbPoint)
+                cellCoords.AddPoint(cellX, cellY)
+                dist = cellCoords.Distance(selectedRoadCoord)
+                subGridDict[cell] = dist
+        selectedCell = min(subGridDict, key=subGridDict.get)
+    
     removeBufferList = gridDict[selectedCell]        
     gridDict = {x:[z for z in y if z not in removeBufferList] for x,y in gridDict.items()}
     gridDict = {i: cellStands for i, cellStands in gridDict.items() if cellStands}
     return selectedCell, gridDict
 
 
-
-     
-
-
-def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=300,skidDist=100):
-    offsetBbox = 20
+def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=100):
+    offsetBbox = 30
     bufferfn = 'buffer.shp'
     gridfn = 'grid.shp'
     osmRoadsTiffn = 'OSMRoads.tif'
@@ -498,13 +532,13 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=300,skidDist=100):
     osmRoadsArray = raster2array(osmRoadsTiffn,bbox) # creates array 'osmRoadsArray' and 'bbox'
     costSurfaceArray[osmRoadsArray == 1.0] = 0 # updates array 'costSurfaceArray'  
     array2raster(newCostSurfacefn,costSurfacefn,bbox,costSurfaceArray) # writes costSurfaceArray to 'OSMCostSurface.tif'
-    
+
     gridDict = removeBuffer(bufferfn,gridDict,newCostSurfacefn,costSurfaceArray) # removes buffers touching OSM roads
     
     while gridDict:
-        print gridDict
-        
-        selectedCell,gridDict = selectCell(gridfn,bufferfn,gridDict) # creates string 'selectedCell'
+        print printList(gridDict)
+            
+        selectedCell, gridDict = selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,newCostSurfacefn) # creates string 'selectedCell'
         print 'Selected cell: ', selectedCell
 
         costSurfaceArray = createPath(newCostSurfacefn,costSurfaceArray,selectedCell,gridfn) # updates array 'costSurfaceArray'
@@ -517,7 +551,7 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=300,skidDist=100):
     
         
 if __name__ == "__main__":
-    standsfn = 'stands2.shp'
+    standsfn = 'stands1.shp'
     costSurfacefn = '/Volumes/GIS/Basedata/PNW/terrain/slope'
     newRoadsfn = 'newRoads.shp'
     
