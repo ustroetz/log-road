@@ -6,7 +6,17 @@ import requests
 from math import ceil, sqrt
 import itertools
 
-
+def cellID2cellIndex(selectedCell,gridfn,CostSurfacefn):
+    grid = ogr.Open(gridfn)
+    lyrGrid = grid.GetLayer()
+    featSelectedCell = lyrGrid.GetFeature(selectedCell)
+    geomSelectedCell = featSelectedCell.GetGeometryRef()
+    centroidSelectedCell = geomSelectedCell.Centroid()
+    selectedCellX = centroidSelectedCell.GetX()
+    selectedCellY = centroidSelectedCell.GetY()
+    selectedCellIndexX,selectedCellIndexY,pixelWidth,pixelHeight = coord2pixelOffset(CostSurfacefn,selectedCellX,selectedCellY)
+    return selectedCellIndexX,selectedCellIndexY
+    
 def array2raster(newRasterfn,rasterfn,bbox,array):
     xmin,xmax,ymin,ymax = bbox
     xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
@@ -157,6 +167,34 @@ def createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox):
     bbox = createProjectBbox(standsfn,offsetBbox)
     return bbox
 
+def createGridDict(gridfn,bufferfn):
+    grid = ogr.Open(gridfn)
+    lyrGrid = grid.GetLayer()
+    gridList = range(lyrGrid.GetFeatureCount())
+    
+    buffer = ogr.Open(bufferfn)
+    lyrBuffer = buffer.GetLayer()
+    bufferList = range(lyrBuffer.GetFeatureCount())
+    
+    gridDict = {}
+    
+    for i in gridList:
+        # loop grid
+        featGrid = lyrGrid.GetFeature(i)
+        geomGrid = featGrid.GetGeometryRef()
+        
+        cellStands = []
+        for j in bufferList:
+            featBuffer = lyrBuffer.GetFeature(j)
+            geomBuffer = featBuffer.GetGeometryRef()
+            
+            if geomGrid.Intersects(geomBuffer):
+                cellStands.append(j)
+    
+        gridDict[i] = cellStands
+        
+    gridDict = {i: cellStands for i, cellStands in gridDict.items() if cellStands}
+    return gridDict
 
 def createBuffer(standsfn, bufferfn, skidDist):
     stands = ogr.Open(standsfn)
@@ -190,20 +228,13 @@ def createBuffer(standsfn, bufferfn, skidDist):
         outFeature.Destroy()
         featureStand.Destroy()
         featureStand = lyrStands.GetNextFeature()
+    
+
         
-    bufferList = range(lyrStandsBuffer.GetFeatureCount())
-    return bufferList
     
 def createPath(CostSurfacefn,costSurfaceArray,selectedCell,gridfn):   
     # get index of selected cell
-    grid = ogr.Open(gridfn)
-    lyrGrid = grid.GetLayer()
-    featSelectedCell = lyrGrid.GetFeature(selectedCell)
-    geomSelectedCell = featSelectedCell.GetGeometryRef()
-    centroidSelectedCell = geomSelectedCell.Centroid()
-    selectedCellX = centroidSelectedCell.GetX()
-    selectedCellY = centroidSelectedCell.GetY()
-    selectedCellIndexX,selectedCellIndexY,pixelWidth,pixelHeight = coord2pixelOffset(CostSurfacefn,selectedCellX,selectedCellY)
+    selectedCellIndexX,selectedCellIndexY = cellID2cellIndex(selectedCell,gridfn,CostSurfacefn)
     
     # get index of existing road (first point that occurs)
     StraightLineDict = {}
@@ -376,10 +407,17 @@ def raster2array(rasterfn,bbox):
     return array  
 
   
-def removeBuffer(bufferfn,bufferList,rasterfn,costSurfaceArray):
+def removeBuffer(bufferfn,gridDict,rasterfn,costSurfaceArray):
 
     standsBuffer = ogr.Open(bufferfn)
     lyrStandsBuffer = standsBuffer.GetLayer()
+    
+    # create bufferList
+    bufferList = []
+    for cellID in gridDict:
+        for bufferID in gridDict[cellID]:
+            if bufferID not in bufferList:
+                bufferList.append(bufferID)
     
     # create list of costSurfaceArray value = 0
     roadList = np.where(costSurfaceArray == 0)
@@ -406,47 +444,39 @@ def removeBuffer(bufferfn,bufferList,rasterfn,costSurfaceArray):
                     
             count += 1  
                     
-      
-    bufferList = (set(bufferList) - set(removeBufferList))
-    return bufferList
-    
-def selectCell(gridfn,bufferfn,bufferList):
-    grid = ogr.Open(gridfn)
-    lyrGrid = grid.GetLayer()
-    gridList = range(lyrGrid.GetFeatureCount())
-    
-    buffer = ogr.Open(bufferfn)
-    lyrBuffer = buffer.GetLayer()
-    
-    gridDict = {}
-    
-    for i in gridList:
-        # loop grid
-        featGrid = lyrGrid.GetFeature(i)
-        geomGrid = featGrid.GetGeometryRef()
-        
-        cellStands = []
-        for j in bufferList:
-            featBuffer = lyrBuffer.GetFeature(j)
-            geomBuffer = featBuffer.GetGeometryRef()
-            
-            if geomGrid.Intersects(geomBuffer):
-                cellStands.append(j)
-    
-        gridDict[i] = cellStands
+    gridDict = {x:[z for z in y if z not in removeBufferList] for x,y in gridDict.items()}
+    gridDict = {i: cellStands for i, cellStands in gridDict.items() if cellStands}        
+    return gridDict
+
+def selectCell(gridfn,bufferfn,gridDict):
 
     selectedCell = max(gridDict, key=lambda x:len(gridDict[x]))
-    removeBufferList = gridDict[selectedCell]
-    bufferList = (set(bufferList) - set(removeBufferList))
     
-    return selectedCell, bufferList
+    # # in case stands don't intersect
+    # if len(gridDict[selectedCell]) == 1:
+    #     roadIndexY, roadIndexX = np.where(costSurfaceArray == 0)
+    #     for cell in gridDict:
+    #         selectedCellIndexX,selectedCellIndexY = cellID2cellIndex(cell,gridfn,CostSurfacefn)
+    #         while count < len(roadIndexY):
+    #             dist =  sqrt((selectedCellIndexY-roadIndexY[count])**2+(selectedCellIndexX-roadIndexX[count])**2)
+    #             index = (roadIndexY[count],roadIndexX[count])        
+    #             StraightLineDict[index,cell] = dist
+    #             count +=1
+    #     roadIndexCellID = min(StraightLineDict, key=StraightLineDict.get)
+    #     selectedCell = roadIndexCellID[1]
+    #     print selectedCell   
+     
+    removeBufferList = gridDict[selectedCell]        
+    gridDict = {x:[z for z in y if z not in removeBufferList] for x,y in gridDict.items()}
+    gridDict = {i: cellStands for i, cellStands in gridDict.items() if cellStands}
+    return selectedCell, gridDict
 
 
 
      
 
 
-def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=100):
+def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=300,skidDist=100):
     offsetBbox = 20
     bufferfn = 'buffer.shp'
     gridfn = 'grid.shp'
@@ -456,30 +486,30 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=100):
 
     bbox = createProjectBbox(standsfn,offsetBbox) # creates bbox that extents standsfn bbox by specified offset
     
-    bufferList = createBuffer(standsfn, bufferfn, skidDist) # creates 'buffer_stands.shp' and list of buffer features
+    createBuffer(standsfn, bufferfn, skidDist) # creates 'buffer_stands.shp' and list of buffer features
 
     bbox = createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox) # creates 'grid.shp' and updates bbox based on grid's extent
     
+    gridDict = createGridDict(gridfn,bufferfn)
+    
     costSurfaceArray = raster2array(costSurfacefn,bbox) # creates array 'costSurfaceArray' and float 'bbox'
     
-    osm2tif(bbox,costSurfacefn,osmRoadsTiffn) # creates 'OSMroads.tif' (existing OSM roads)    
+    #osm2tif(bbox,costSurfacefn,osmRoadsTiffn) # creates 'OSMroads.tif' (existing OSM roads)    
     osmRoadsArray = raster2array(osmRoadsTiffn,bbox) # creates array 'osmRoadsArray' and 'bbox'
     costSurfaceArray[osmRoadsArray == 1.0] = 0 # updates array 'costSurfaceArray'  
     array2raster(newCostSurfacefn,costSurfacefn,bbox,costSurfaceArray) # writes costSurfaceArray to 'OSMCostSurface.tif'
     
-    print "Original buffers: ", bufferList
-    bufferList = removeBuffer(bufferfn,bufferList,newCostSurfacefn,costSurfaceArray) # removes buffers touching OSM roads
-    print "Buffers without existing roads: ", bufferList
-
-    while bufferList:
+    gridDict = removeBuffer(bufferfn,gridDict,newCostSurfacefn,costSurfaceArray) # removes buffers touching OSM roads
+    
+    while gridDict:
+        print gridDict
         
-        selectedCell, bufferList = selectCell(gridfn,bufferfn,bufferList) # creates string 'selectedCell'
+        selectedCell,gridDict = selectCell(gridfn,bufferfn,gridDict) # creates string 'selectedCell'
         print 'Selected cell: ', selectedCell
 
         costSurfaceArray = createPath(newCostSurfacefn,costSurfaceArray,selectedCell,gridfn) # updates array 'costSurfaceArray'
 
-        bufferList = removeBuffer(bufferfn,bufferList,newCostSurfacefn,costSurfaceArray) # removes buffers touching new road
-        print "Buffers without new roads: ", bufferList
+        gridDict = removeBuffer(bufferfn,gridDict,newCostSurfacefn,costSurfaceArray) # removes buffers touching new road
         
     array2shp(costSurfaceArray,newRoadsfn,newCostSurfacefn) # writes final roads in shapefile
         
@@ -488,7 +518,7 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=100):
         
 if __name__ == "__main__":
     standsfn = 'stands2.shp'
-    costSurfacefn = 'CostSurface.tif'  #'/Volumes/GIS/Basedata/PNW/terrain/slope'
+    costSurfacefn = '/Volumes/GIS/Basedata/PNW/terrain/slope'
     newRoadsfn = 'newRoads.shp'
     
     main(standsfn,costSurfacefn,newRoadsfn)
