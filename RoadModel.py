@@ -459,7 +459,6 @@ def removeBuffer(bufferfn,gridDict,rasterfn,costSurfaceArray):
 def selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,rasterfn):
 
     selectedCell = max(gridDict, key=lambda x:len(gridDict[x]))
-    
     # in case stands don't intersect
     if len(gridDict[selectedCell]) == 1:
         # find closest cell of selected buffer to road
@@ -491,9 +490,10 @@ def selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,rasterfn):
         gridDs = ogr.Open(gridfn)
         lyrGrid = gridDs.GetLayer()
         subGridDict = {}
+        count = 0
         for cell in gridDict:
             if (gridDict[cell][0] == gridDict[selectedCell][0]):
-                featureCell = lyrGrid.GetFeature(gridDict[cell][0])
+                featureCell = lyrGrid.GetFeature(cell)
                 geomCell = featureCell.GetGeometryRef()
                 centroidCell = geomCell.Centroid()
                 cellX = centroidCell.GetX()
@@ -503,14 +503,14 @@ def selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,rasterfn):
                 dist = cellCoords.Distance(selectedRoadCoord)
                 subGridDict[cell] = dist
         selectedCell = min(subGridDict, key=subGridDict.get)
-    
+
     removeBufferList = gridDict[selectedCell]        
     gridDict = {x:[z for z in y if z not in removeBufferList] for x,y in gridDict.items()}
     gridDict = {i: cellStands for i, cellStands in gridDict.items() if cellStands}
     return selectedCell, gridDict
 
 
-def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=100):
+def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=0):
     offsetBbox = 30
     bufferfn = 'buffer.shp'
     gridfn = 'grid.shp'
@@ -536,10 +536,10 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=100):
     gridDict = removeBuffer(bufferfn,gridDict,newCostSurfacefn,costSurfaceArray) # removes buffers touching OSM roads
     
     while gridDict:
-        print printList(gridDict)
+        print "remaining buffer:"
+        printList(gridDict)
             
         selectedCell, gridDict = selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,newCostSurfacefn) # creates string 'selectedCell'
-        print 'Selected cell: ', selectedCell
 
         costSurfaceArray = createPath(newCostSurfacefn,costSurfaceArray,selectedCell,gridfn) # updates array 'costSurfaceArray'
 
