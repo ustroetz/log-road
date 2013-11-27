@@ -68,7 +68,7 @@ def array2shp(array,outSHPfn,newCostSurfacefn):
             line.AddPoint(i[0][0],i[0][1])
             line.AddPoint(i[1][0],i[1][1])
             multiline.AddGeometry(line)
-
+    
     # wkbMultiLineString2shp
     shpDriver = ogr.GetDriverByName("ESRI Shapefile")
     if os.path.exists(outSHPfn):
@@ -79,6 +79,10 @@ def array2shp(array,outSHPfn,newCostSurfacefn):
     outFeature = ogr.Feature(featureDefn)
     outFeature.SetGeometry(multiline)
     outLayer.CreateFeature(outFeature)
+    
+    # calculate length of line
+    length = multiline.Length()
+    return length
     
 def bbox2pixelOffset(rasterfn,bbox):
     xmin,xmax,ymin,ymax = bbox
@@ -510,7 +514,7 @@ def selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,rasterfn):
     return selectedCell, gridDict
 
 
-def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=0):
+def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=400):
     offsetBbox = 30
     bufferfn = 'buffer.shp'
     gridfn = 'grid.shp'
@@ -524,14 +528,14 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=0):
 
     bbox = createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox) # creates 'grid.shp' and updates bbox based on grid's extent
     
-    gridDict = createGridDict(gridfn,bufferfn)
+    gridDict = createGridDict(gridfn,bufferfn) # creates dict (key=cellID; value: List of buffers intersecting cell)
     
-    costSurfaceArray = raster2array(costSurfacefn,bbox) # creates array 'costSurfaceArray' and float 'bbox'
+    costSurfaceArray = raster2array(costSurfacefn,bbox) # creates array 'costSurfaceArray'
     
     #osm2tif(bbox,costSurfacefn,osmRoadsTiffn) # creates 'OSMroads.tif' (existing OSM roads)    
-    osmRoadsArray = raster2array(osmRoadsTiffn,bbox) # creates array 'osmRoadsArray' and 'bbox'
+    osmRoadsArray = raster2array(osmRoadsTiffn,bbox) # creates array 'osmRoadsArray'
     costSurfaceArray[osmRoadsArray == 1.0] = 0 # updates array 'costSurfaceArray'  
-    array2raster(newCostSurfacefn,costSurfacefn,bbox,costSurfaceArray) # writes costSurfaceArray to 'OSMCostSurface.tif'
+    array2raster(newCostSurfacefn,costSurfacefn,bbox,costSurfaceArray) # writes costSurfaceArray to 'newCostSurface.tif'
 
     gridDict = removeBuffer(bufferfn,gridDict,newCostSurfacefn,costSurfaceArray) # removes buffers touching OSM roads
     
@@ -539,20 +543,22 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=0):
         print "remaining buffer:"
         printList(gridDict)
             
-        selectedCell, gridDict = selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,newCostSurfacefn) # creates string 'selectedCell'
+        selectedCell, gridDict = selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,newCostSurfacefn) # creates 'selectedCell'
+        print selectedCell
 
         costSurfaceArray = createPath(newCostSurfacefn,costSurfaceArray,selectedCell,gridfn) # updates array 'costSurfaceArray'
 
-        gridDict = removeBuffer(bufferfn,gridDict,newCostSurfacefn,costSurfaceArray) # removes buffers touching new road
-        
-    array2shp(costSurfaceArray,newRoadsfn,newCostSurfacefn) # writes final roads in shapefile
-        
+        gridDict = removeBuffer(bufferfn,gridDict,newCostSurfacefn,costSurfaceArray) # removes buffers touching new road from gridDict
+    
+    costSurfaceArray[osmRoadsArray == 1.0] = 1 # remove existing roads from new roads    
+    length = array2shp(costSurfaceArray,newRoadsfn,newCostSurfacefn) # writes final roads in shapefile and returns length of new roads in meters
+    print length 
 
     
         
 if __name__ == "__main__":
-    standsfn = 'stands1.shp'
-    costSurfacefn = '/Volumes/GIS/Basedata/PNW/terrain/slope'
+    standsfn = 'stands3.shp'
+    costSurfacefn = 'CostSurface.tif' #'/Volumes/GIS/Basedata/PNW/terrain/slope'
     newRoadsfn = 'newRoads.shp'
     
     main(standsfn,costSurfacefn,newRoadsfn)
