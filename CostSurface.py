@@ -22,7 +22,7 @@ def shp2raster(inputfn,baseRasterfn):
     cols = raster.RasterXSize
     rows = raster.RasterYSize
 
-    target_ds = gdal.GetDriverByName('GTiff').Create(outputfn, cols, rows, gdal.GDT_Byte)
+    target_ds = gdal.GetDriverByName('GTiff').Create(outputfn, cols, rows, gdal.GDT_Byte) 
     target_ds.SetGeoTransform((originX, pixelWidth, 0, originY, 0, pixelHeight))
     band = target_ds.GetRasterBand(1)
     NoData_value = 0
@@ -46,7 +46,7 @@ def array2raster(newRasterfn,rasterfn,costSurfaceArray):
     rows = raster.RasterYSize
     
     driver = gdal.GetDriverByName('GTiff')
-    outRaster = driver.Create(newRasterfn, cols, rows, gdal.GDT_Byte)
+    outRaster = driver.Create(newRasterfn, cols, rows, 1, gdal.GDT_Float32)
     outRaster.SetGeoTransform((originX, pixelWidth, 0, originY, 0, pixelHeight))
     outband = outRaster.GetRasterBand(1)
     outband.WriteArray(costSurfaceArray)
@@ -79,5 +79,5 @@ def main(baseRasterfn,CostSurfacefn,dataDict):
 if __name__ == "__main__":
     baseRasterfn = 'baseSurface.tif'
     CostSurfacefn = 'CostSurface.tif'
-    dataDict = {'baseSurface.tif':1, 'river.shp':100}
+    dataDict = {'baseSurface.tif':1, 'river.shp':999999999}
     main(baseRasterfn, CostSurfacefn, dataDict)
