@@ -1,4 +1,5 @@
 import gdal, ogr, osr
+import numpy as np
 
 def raster2array(rasterfn):
     raster = gdal.Open(rasterfn)
@@ -70,11 +71,13 @@ def main(baseRasterfn,CostSurfacefn,dataDict):
         array = array*updateValue # update array by value
         
         costSurfaceArray += array
-              
+    
+    costSurfaceArray[costSurfaceArray < 1] = 1 # change value of 0 to 1 otherwise they mix up with 0 values of roads
+    
     array2raster(CostSurfacefn,baseRasterfn,costSurfaceArray)
     
 if __name__ == "__main__":
     baseRasterfn = 'baseSurface.tif'
     CostSurfacefn = 'CostSurface.tif'
-    dataDict = {'baseSurface.tif':1, 'test.shp':100}
+    dataDict = {'baseSurface.tif':1, 'river.shp':100}
     main(baseRasterfn, CostSurfacefn, dataDict)
