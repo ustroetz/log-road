@@ -1,4 +1,4 @@
-import gdal, ogr, osr
+import gdal, ogr, osr, os
 import numpy as np
 
 def raster2array(rasterfn):
@@ -22,7 +22,7 @@ def shp2raster(inputfn,baseRasterfn):
     cols = raster.RasterXSize
     rows = raster.RasterYSize
 
-    target_ds = gdal.GetDriverByName('GTiff').Create(outputfn, cols, rows, gdal.GDT_Byte) 
+    target_ds = gdal.GetDriverByName('GTiff').Create(outputfn, cols, rows, 1, gdal.GDT_Byte) 
     target_ds.SetGeoTransform((originX, pixelWidth, 0, originY, 0, pixelHeight))
     band = target_ds.GetRasterBand(1)
     NoData_value = 0
@@ -68,6 +68,9 @@ def main(baseRasterfn,CostSurfacefn,dataDict):
             fn = 'rasterized.tif'
 
         array = raster2array(fn) # raster2array
+        if fn == 'rasterized.tif':
+            os.remove(fn)
+
         array = array*updateValue # update array by value
         
         costSurfaceArray += array
