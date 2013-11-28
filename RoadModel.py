@@ -369,7 +369,7 @@ def osm2tif(bbox,costSurfacefn,osmRoadsTiffn):
         source_ds = ogr.Open(osmRoadsSHPfn)
         source_layer = source_ds.GetLayer()
     
-        target_ds = gdal.GetDriverByName('GTiff').Create(osmRoadsTiffn, xsize, ysize, gdal.GDT_Byte)
+        target_ds = gdal.GetDriverByName('GTiff').Create(osmRoadsTiffn, xsize, ysize, 1, gdal.GDT_Byte)
         target_ds.SetGeoTransform((xmin, pixelWidth, 0, ymax, 0, pixelHeight))
         band = target_ds.GetRasterBand(1)
         NoData_value = 255
@@ -419,6 +419,42 @@ def raster2array(rasterfn,bbox):
     return array  
 
   
+def shp2raster(inputSHPfn,rasterfn,outputRasterfn):    
+    
+    source_ds = ogr.Open(inputSHPfn)
+    source_layer = source_ds.GetLayer()
+    
+    raster = gdal.Open(rasterfn)
+    geotransform = raster.GetGeoTransform()
+    originX = geotransform[0]
+    originY = geotransform[3] 
+    pixelWidth = geotransform[1] 
+    pixelHeight = geotransform[5]
+    cols = raster.RasterXSize
+    rows = raster.RasterYSize
+
+    target_ds = gdal.GetDriverByName('GTiff').Create(outputRasterfn, cols, rows, 1, gdal.GDT_Byte) 
+    target_ds.SetGeoTransform((originX, pixelWidth, 0, originY, 0, pixelHeight))
+    band = target_ds.GetRasterBand(1)
+    NoData_value = 0
+    band.SetNoDataValue(NoData_value)
+    band.FlushCache()        
+    gdal.RasterizeLayer(target_ds, [1], source_layer, burn_values=[1])   
+
+    target_dsSRS = osr.SpatialReference()
+    target_dsSRS.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
+    target_ds.SetProjection(target_dsSRS.ExportToWkt())
+
+def shp2array(inputSHPfn,rasterfn):  
+    outputRasterfn = 'intermediate.tif'  
+    shp2raster(inputSHPfn,rasterfn,outputRasterfn)
+    
+    raster = gdal.Open(outputRasterfn)
+    band = raster.GetRasterBand(1)
+    array = band.ReadAsArray()
+    os.remove(outputRasterfn)
+    return array
+
 def removeBuffer(bufferfn,gridDict,rasterfn,costSurfaceArray):
 
     standsBuffer = ogr.Open(bufferfn)
@@ -536,6 +572,11 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=400):
     osmRoadsArray = raster2array(osmRoadsTiffn,bbox) # creates array 'osmRoadsArray'
     costSurfaceArray[osmRoadsArray == 1.0] = 0 # updates array 'costSurfaceArray'  
     array2raster(newCostSurfacefn,costSurfacefn,bbox,costSurfaceArray) # writes costSurfaceArray to 'newCostSurface.tif'
+    
+    standsarray = shp2array(standsfn,newCostSurfacefn) # creates array from stands
+    costSurfaceArray[standsarray == 0] *= 5 # updates array, area outside of stands
+    
+
 
     gridDict = removeBuffer(bufferfn,gridDict,newCostSurfacefn,costSurfaceArray) # removes buffers touching OSM roads
     
@@ -552,7 +593,7 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=400):
     
     costSurfaceArray[osmRoadsArray == 1.0] = 1 # remove existing roads from new roads    
     length = array2shp(costSurfaceArray,newRoadsfn,newCostSurfacefn) # writes final roads in shapefile and returns length of new roads in meters
-    print length 
+    print 'Length new roads (miles): ', length*0.000621371 
 
     
         
