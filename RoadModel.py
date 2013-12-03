@@ -22,7 +22,7 @@ def array2raster(newRasterfn,rasterfn,bbox,array):
     xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
     raster = gdal.Open(rasterfn)
     driver = gdal.GetDriverByName('GTiff')
-    outRaster = driver.Create(newRasterfn, xsize, ysize, gdal.GDT_Byte)
+    outRaster = driver.Create(newRasterfn, xsize, ysize, 1, gdal.GDT_Float32)
     outRaster.SetGeoTransform((xmin, pixelWidth, 0, ymax, 0, pixelHeight))
     outband = outRaster.GetRasterBand(1)
     outband.SetNoDataValue(9999)
@@ -224,7 +224,7 @@ def createBuffer(standsfn, bufferfn, skidDist):
                 dist = standCentroid.Distance(standEdge)
                 bufferDistList.append(dist)
         distStandEdge = max(bufferDistList)
-        bufferDist = max(skidDist - distStandEdge, 0)
+        bufferDist = max(0,skidDist - distStandEdge)
         geomBufferStand = geomStand.Buffer(bufferDist)
         outFeature = ogr.Feature(featureDefn)
         outFeature.SetGeometry(geomBufferStand)
@@ -369,7 +369,7 @@ def osm2tif(bbox,costSurfacefn,osmRoadsTiffn):
         source_ds = ogr.Open(osmRoadsSHPfn)
         source_layer = source_ds.GetLayer()
     
-        target_ds = gdal.GetDriverByName('GTiff').Create(osmRoadsTiffn, xsize, ysize, 1, gdal.GDT_Byte)
+        target_ds = gdal.GetDriverByName('GTiff').Create(osmRoadsTiffn, xsize, ysize, 1, gdal.GDT_Float32)
         target_ds.SetGeoTransform((xmin, pixelWidth, 0, ymax, 0, pixelHeight))
         band = target_ds.GetRasterBand(1)
         NoData_value = 255
@@ -411,6 +411,29 @@ def printList(myDict):
             if jtem not in myList:
                 myList.append(jtem)
     print myList
+def poly2line(input_poly,output_line):
+
+    source_ds = ogr.Open(input_poly)
+    source_layer = source_ds.GetLayer()
+
+    # polygon2geometryCollection
+    geomcol =  ogr.Geometry(ogr.wkbGeometryCollection)
+    for feat in source_layer:
+        geom = feat.GetGeometryRef()
+        ring = geom.GetGeometryRef(0)
+        geomcol.AddGeometry(ring)
+        
+
+    # geometryCollection2shp
+    shpDriver = ogr.GetDriverByName("ESRI Shapefile")
+    if os.path.exists(output_line):
+    	shpDriver.DeleteDataSource(output_line)
+    outDataSource = shpDriver.CreateDataSource(output_line)
+    outLayer = outDataSource.CreateLayer(output_line, geom_type=ogr.wkbMultiLineString)
+    featureDefn = outLayer.GetLayerDefn()
+    outFeature = ogr.Feature(featureDefn)
+    outFeature.SetGeometry(geomcol)
+    outLayer.CreateFeature(outFeature)
 def raster2array(rasterfn,bbox):
     xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
     raster = gdal.Open(rasterfn)
@@ -433,7 +456,7 @@ def shp2raster(inputSHPfn,rasterfn,outputRasterfn):
     cols = raster.RasterXSize
     rows = raster.RasterYSize
 
-    target_ds = gdal.GetDriverByName('GTiff').Create(outputRasterfn, cols, rows, 1, gdal.GDT_Byte) 
+    target_ds = gdal.GetDriverByName('GTiff').Create(outputRasterfn, cols, rows, 1, gdal.GDT_Float32) 
     target_ds.SetGeoTransform((originX, pixelWidth, 0, originY, 0, pixelHeight))
     band = target_ds.GetRasterBand(1)
     NoData_value = 0
@@ -550,21 +573,26 @@ def selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,rasterfn):
     return selectedCell, gridDict
 
 
-def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=400):
+def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=0):
     offsetBbox = 30
     bufferfn = 'buffer.shp'
     gridfn = 'grid.shp'
     osmRoadsTiffn = 'OSMRoads.tif'
     newCostSurfacefn = 'newCostSurface.tif' 
+    standsLinefn = 'standsLine.shp'
     gridHeight = gridWidth = getGridWidth(costSurfacefn,gridWidth) # creates gridWidth&gridHeight from raster width if not specified      
 
     bbox = createProjectBbox(standsfn,offsetBbox) # creates bbox that extents standsfn bbox by specified offset
     
-    createBuffer(standsfn, bufferfn, skidDist) # creates 'buffer_stands.shp' and list of buffer features
-
-    bbox = createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox) # creates 'grid.shp' and updates bbox based on grid's extent
+    #createBuffer(standsfn, bufferfn, skidDist) # creates 'buffer_stands.shp' and list of buffer features
+    print 'Buffer created'
     
-    gridDict = createGridDict(gridfn,bufferfn) # creates dict (key=cellID; value: List of buffers intersecting cell)
+
+    #bbox = createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox) # creates 'grid.shp' and updates bbox based on grid's extent
+    #gridDict = createGridDict(gridfn,bufferfn) # creates dict (key=cellID; value: List of buffers intersecting cell)
+    gridDict = eval((open('gridDict.txt', 'r')).read())    
+    print 'Grid created'
+    
     
     costSurfaceArray = raster2array(costSurfacefn,bbox) # creates array 'costSurfaceArray'
     
@@ -572,12 +600,15 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=400):
     osmRoadsArray = raster2array(osmRoadsTiffn,bbox) # creates array 'osmRoadsArray'
     costSurfaceArray[osmRoadsArray == 1.0] = 0 # updates array 'costSurfaceArray'  
     array2raster(newCostSurfacefn,costSurfacefn,bbox,costSurfaceArray) # writes costSurfaceArray to 'newCostSurface.tif'
+    print 'Existing roads downloaded'
     
     standsarray = shp2array(standsfn,newCostSurfacefn) # creates array from stands
-    costSurfaceArray[standsarray == 0] *= 5 # updates array, area outside of stands
+    costSurfaceArray[standsarray == 0] **= 2 # updates array, area outside of stands
+    poly2line(standsfn,standsLinefn) # creates stands line shapefile
+    standLinesarray = shp2array(standsLinefn,newCostSurfacefn) # creates array from stands line
+    costSurfaceArray[standLinesarray == 1] /= 2    # updates array, stands boundaries    
     
-
-
+    
     gridDict = removeBuffer(bufferfn,gridDict,newCostSurfacefn,costSurfaceArray) # removes buffers touching OSM roads
     
     while gridDict:
@@ -600,6 +631,6 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=400):
 if __name__ == "__main__":
     standsfn = 'stands3.shp'
     costSurfacefn = 'CostSurface.tif' #'/Volumes/GIS/Basedata/PNW/terrain/slope'
-    newRoadsfn = 'newRoads.shp'
+    newRoadsfn = 'newRoadSixes2.shp'
     
     main(standsfn,costSurfacefn,newRoadsfn)
