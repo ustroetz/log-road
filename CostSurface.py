@@ -68,7 +68,7 @@ def main(baseRasterfn,CostSurfacefn,dataDict):
             shp2raster(fn,baseRasterfn)
             fn = 'rasterized.tif'
         
-        if fn == 'Slope.tif':
+        if 'Slope' in fn:
             array = raster2array(fn) # raster2array
             array[array > 50] **=2
             array = array*1 # update array by value
@@ -83,7 +83,8 @@ def main(baseRasterfn,CostSurfacefn,dataDict):
     array2raster(CostSurfacefn,baseRasterfn,costSurfaceArray)
     
 if __name__ == "__main__":
-    baseRasterfn = 'baseSurface.tif'
+    baseRasterfn = 'Slope.tif'
     CostSurfacefn = 'CostSurface.tif'      
-    dataDict = {'Slope.tif':2, 'river.shp':99999999999999999}
+    dataDict = {'Slope.tif':2, 'testRiver.shp':np.inf}
+#    dataDict = {'Slope.tif':2}
     main(baseRasterfn, CostSurfacefn, dataDict)
