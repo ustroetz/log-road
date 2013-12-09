@@ -278,11 +278,10 @@ def getBbox(shpfn):
     bbox = lyr.GetExtent()
     return bbox
 
-def getGridWidth(costSurfacefn,gridWidth):
-    if gridWidth == None:
-        raster = gdal.Open(costSurfacefn)
-        geotransform = raster.GetGeoTransform()
-        gridWidth = geotransform[1]
+def getGridWidth(costSurfacefn):
+    raster = gdal.Open(costSurfacefn)
+    geotransform = raster.GetGeoTransform()
+    gridWidth = geotransform[1]
         
     return gridWidth
             
@@ -573,24 +572,24 @@ def selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,rasterfn):
     return selectedCell, gridDict
 
 
-def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=0):
+def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
     offsetBbox = 30
     bufferfn = 'buffer.shp'
     gridfn = 'grid.shp'
     osmRoadsTiffn = 'OSMRoads.tif'
     newCostSurfacefn = 'newCostSurface.tif' 
     standsLinefn = 'standsLine.shp'
-    gridHeight = gridWidth = getGridWidth(costSurfacefn,gridWidth) # creates gridWidth&gridHeight from raster width if not specified      
+    gridHeight = gridWidth = getGridWidth(costSurfacefn) # creates gridWidth&gridHeight from raster width if not specified      
 
     bbox = createProjectBbox(standsfn,offsetBbox) # creates bbox that extents standsfn bbox by specified offset
     
-    #createBuffer(standsfn, bufferfn, skidDist) # creates 'buffer_stands.shp' and list of buffer features
+    createBuffer(standsfn, bufferfn, skidDist) # creates 'buffer_stands.shp' and list of buffer features
     print 'Buffer created'
     
 
-    #bbox = createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox) # creates 'grid.shp' and updates bbox based on grid's extent
-    #gridDict = createGridDict(gridfn,bufferfn) # creates dict (key=cellID; value: List of buffers intersecting cell)
-    gridDict = eval((open('gridDict.txt', 'r')).read())    
+    bbox = createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox) # creates 'grid.shp' and updates bbox based on grid's extent
+    gridDict = createGridDict(gridfn,bufferfn) # creates dict (key=cellID; value: List of buffers intersecting cell)
+    #gridDict = eval((open('gridDict.txt', 'r')).read())    
     print 'Grid created'
     
     
@@ -610,6 +609,7 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=0):
     
     
     gridDict = removeBuffer(bufferfn,gridDict,newCostSurfacefn,costSurfaceArray) # removes buffers touching OSM roads
+    print gridDict
     
     while gridDict:
         print "remaining buffer:"
@@ -629,8 +629,8 @@ def main(standsfn,costSurfacefn,newRoadsfn,gridWidth=None,skidDist=0):
     
         
 if __name__ == "__main__":
-    standsfn = 'stands3.shp'
+    standsfn = 'Dickey.shp'
     costSurfacefn = 'CostSurface.tif' #'/Volumes/GIS/Basedata/PNW/terrain/slope'
-    newRoadsfn = 'newRoadSixes2.shp'
+    newRoadsfn = 'newRoadDickey1.shp'
     
     main(standsfn,costSurfacefn,newRoadsfn)
