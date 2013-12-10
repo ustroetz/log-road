@@ -1,5 +1,5 @@
 road_model2
 ===========
 <p align="center">
-  <img src="http://minus.com/i/9Wh2XR27VTBM" />
+  <img src="http://i.minus.com/i9Wh2XR27VTBM.gif" />
 </p>
