@@ -106,7 +106,7 @@ def coord2pixelOffset(rasterfn,x,y):
     return xOffset,yOffset,pixelWidth,pixelHeight
 
         
-def createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox):
+def createGrid(gridfn,bbox,gridHeight,gridWidth):
 
     xmin,xmax,ymin,ymax = bbox
     
@@ -168,7 +168,7 @@ def createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox):
     outDataSource.Destroy()
     
     # update bbox based on new grid
-    bbox = createProjectBbox(standsfn,offsetBbox)
+    bbox = createProjectBbox(standsfn)
     return bbox
 
 def createGridDict(gridfn,bufferfn):
@@ -262,14 +262,8 @@ def createPath(CostSurfacefn,costSurfaceArray,selectedCell,gridfn):
     costSurfaceArray[path == 1] = 0
     return costSurfaceArray
 
-def createProjectBbox(standsfn,offsetBbox):
+def createProjectBbox(standsfn):
     bbox = getBbox(standsfn)
-    xmin,xmax,ymin,ymax = bbox
-    xmin -= offsetBbox
-    xmax += offsetBbox
-    ymin -= offsetBbox
-    ymax += offsetBbox
-    bbox = xmin,xmax,ymin,ymax
     return bbox    
     
 def getBbox(shpfn):
@@ -572,8 +566,7 @@ def selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,rasterfn):
     return selectedCell, gridDict
 
 
-def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
-    offsetBbox = 30
+def main(standsfn,costSurfacefn,newRoadsfn,skidDist=300):
     bufferfn = 'buffer.shp'
     gridfn = 'grid.shp'
     osmRoadsTiffn = 'OSMRoads.tif'
@@ -581,35 +574,34 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
     standsLinefn = 'standsLine.shp'
     gridHeight = gridWidth = getGridWidth(costSurfacefn) # creates gridWidth&gridHeight from raster width if not specified      
 
-    bbox = createProjectBbox(standsfn,offsetBbox) # creates bbox that extents standsfn bbox by specified offset
-    
     createBuffer(standsfn, bufferfn, skidDist) # creates 'buffer_stands.shp' and list of buffer features
     print 'Buffer created'
     
-
-    bbox = createGrid(gridfn,bbox,gridHeight,gridWidth,offsetBbox) # creates 'grid.shp' and updates bbox based on grid's extent
+    bbox = createProjectBbox(bufferfn) # creates bbox based on bufferfn's bbox
+    
+    bbox = createGrid(gridfn,bbox,gridHeight,gridWidth) # creates 'grid.shp' and updates bbox based on grid's extent
     gridDict = createGridDict(gridfn,bufferfn) # creates dict (key=cellID; value: List of buffers intersecting cell)
     #gridDict = eval((open('gridDict.txt', 'r')).read())    
     print 'Grid created'
-    
+    gridDictFile = open('gridDict.txt', 'w')
+    gridDictFile.write(str(gridDict))    
     
     costSurfaceArray = raster2array(costSurfacefn,bbox) # creates array 'costSurfaceArray'
     
-    #osm2tif(bbox,costSurfacefn,osmRoadsTiffn) # creates 'OSMroads.tif' (existing OSM roads)    
+    osm2tif(bbox,costSurfacefn,osmRoadsTiffn) # creates 'OSMroads.tif' (existing OSM roads)    
     osmRoadsArray = raster2array(osmRoadsTiffn,bbox) # creates array 'osmRoadsArray'
     costSurfaceArray[osmRoadsArray == 1.0] = 0 # updates array 'costSurfaceArray'  
     array2raster(newCostSurfacefn,costSurfacefn,bbox,costSurfaceArray) # writes costSurfaceArray to 'newCostSurface.tif'
     print 'Existing roads downloaded'
     
     standsarray = shp2array(standsfn,newCostSurfacefn) # creates array from stands
-    costSurfaceArray[standsarray == 0] **= 2 # updates array, area outside of stands
+    costSurfaceArray[standsarray == 0] **= 10 # updates array, area outside of stands
     poly2line(standsfn,standsLinefn) # creates stands line shapefile
     standLinesarray = shp2array(standsLinefn,newCostSurfacefn) # creates array from stands line
     costSurfaceArray[standLinesarray == 1] /= 2    # updates array, stands boundaries    
     
     
     gridDict = removeBuffer(bufferfn,gridDict,newCostSurfacefn,costSurfaceArray) # removes buffers touching OSM roads
-    print gridDict
     
     while gridDict:
         print "remaining buffer:"
@@ -621,16 +613,18 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
         costSurfaceArray = createPath(newCostSurfacefn,costSurfaceArray,selectedCell,gridfn) # updates array 'costSurfaceArray'
 
         gridDict = removeBuffer(bufferfn,gridDict,newCostSurfacefn,costSurfaceArray) # removes buffers touching new road from gridDict
-    
-    costSurfaceArray[osmRoadsArray == 1.0] = 1 # remove existing roads from new roads    
+        
+        
+    costSurfaceArray[osmRoadsArray == 1.0] = 1 # remove existing roads from new roads  
     length = array2shp(costSurfaceArray,newRoadsfn,newCostSurfacefn) # writes final roads in shapefile and returns length of new roads in meters
+        
     print 'Length new roads (miles): ', length*0.000621371 
 
     
         
 if __name__ == "__main__":
-    standsfn = 'Dickey.shp'
+    standsfn = 'stands.shp'
     costSurfacefn = 'CostSurface.tif' #'/Volumes/GIS/Basedata/PNW/terrain/slope'
-    newRoadsfn = 'newRoadDickey1.shp'
+    newRoadsfn = 'newRoads2.shp'
     
     main(standsfn,costSurfacefn,newRoadsfn)
