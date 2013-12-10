@@ -1,3 +1,5 @@
 road_model2
 ===========
-![Alt text](WatchMe.gif)
+<p align="center">
+  <img src="https://raw.github.com/ustroetz/road_model2/master/WatchMe.gif" />
+</p>
