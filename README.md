@@ -37,4 +37,4 @@ Shapefile |
 
 Requires `python-gdal`, `skimage.graph`, `requests`, and `numpy`
 
-To install, simply `python setup.py install` or work directly from the root directory
+To install, simply `python setup.py install` or work directly from the root directory.
