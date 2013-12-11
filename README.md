@@ -6,7 +6,7 @@ Log Road models logging roads based on existing OSM street data, forest stands, 
 
 OSM street data | Forest Stands | Cost Surface
 --- | --- | ---
-OSM | Shapefile | GeoTIF
+OSM | Shapefile | GeoTIFF
 ![Alt text](/Images/InputOSM.png) | ![Alt text](/Images/InputStands.png) | ![Alt text](/Images/InputCostSurface.png)
  
 ###Process     
