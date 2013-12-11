@@ -1,15 +1,16 @@
 Log Road
 ===========
+### Overview
 Log Road models logging roads based on existing OSM street data, forest stands, and a cost surface.
 
-###Input
+####Input
 
 OSM street data | Forest Stands | Cost Surface
 --- | --- | ---
 OSM | Shapefile | GeoTIFF
 ![Alt text](/Images/InputOSM.png) | ![Alt text](/Images/InputStands.png) | ![Alt text](/Images/InputCostSurface.png)
  
-###Process     
+####Process     
 <p align="center">
   <img src="/Images/Process.gif" />
 </p>
@@ -26,8 +27,14 @@ OSM | Shapefile | GeoTIFF
     * Buffers intersecting with new road are removed from the dicitionary. 
 * New roads are written to output shapefile.
 
-###Output
+####Output
 New Roads |
 --- | 
 Shapefile |
 ![Alt text](/Images/Output.png) |
+
+### Installation
+
+Requires `python-gdal`, `skimage.graph`, `requests`, and `numpy`
+
+To install, simply `python setup.py install` or work directly from the root directory
