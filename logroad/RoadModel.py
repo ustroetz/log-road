@@ -1,5 +1,5 @@
 import ogr, gdal, osr
-import os
+import os, sys
 import numpy as np
 from skimage.graph import route_through_array
 import requests
@@ -106,6 +106,11 @@ def coord2pixelOffset(rasterfn,x,y):
     return xOffset,yOffset,pixelWidth,pixelHeight
 
         
+def checkfile(fn):
+    try:
+        open(fn)
+    except:
+        sys.exit('ERROR: File can not be found in the file system.')
 def createGrid(gridfn,bbox,offsetBbox,gridHeight,gridWidth):
     xmin,xmax,ymin,ymax = bbox
     xmin -= offsetBbox
@@ -627,6 +632,8 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=300):
     newCostSurfacefn = 'newCostSurface.tif' 
     standsLinefn = 'standsLine.shp'
     reprostandsfn = 'standsReprojected.shp'
+    checkfile(standsfn)
+    checkfile(costSurfacefn)
     
     reproject(standsfn,reprostandsfn)
     
@@ -682,8 +689,8 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=300):
     
         
 if __name__ == "__main__":
-    standsfn = 'testdata/test_stand.shp'
-    costSurfacefn = 'testdata/CostSurface.tif'
+    standsfn = 'tes.shp'
+    costSurfacefn = 'test.tif'
     newRoadsfn = 'newRoad.shp'
     
     main(standsfn,costSurfacefn,newRoadsfn)
