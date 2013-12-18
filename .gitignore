@@ -2,15 +2,6 @@
 *.cache
 *.egg-info
 *.DS_store
-*.shp
-*.prj
-*.shx
-*.shp
-*.qpj
-*.dbf
-*.pyc
-*.db
-*.tif
 *.xml
 *.geojson
 *.osm
