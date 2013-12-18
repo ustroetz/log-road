@@ -295,7 +295,7 @@ def osm2tif(bbox,costSurfacefn,osmRoadsTiffn):
         righttop = ogr.Geometry(ogr.wkbPoint)
         righttop.AddPoint(bbox[1], bbox[3])
         inSpatialRef = osr.SpatialReference()
-        inSpatialRef.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
+        inSpatialRef.ImportFromProj4('+proj=aea +lat_1=43 +lat_2=48 +lat_0=34 +lon_0=-120 +x_0=600000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs')
         outSpatialRef = osr.SpatialReference()
         outSpatialRef.ImportFromEPSG(4326)
 
@@ -499,6 +499,32 @@ def shp2array(inputSHPfn,rasterfn):
     os.remove(outputRasterfn)
     return array
 
+def reproject(inputfn,outputfn):
+    ds = ogr.Open(inputfn)
+    inLayer = ds.GetLayer()
+    
+    inSpatialRef = osr.SpatialReference()    
+    inSpatialRef.ImportFromEPSG(3857)
+    outSpatialRef = osr.SpatialReference()
+    outSpatialRef.ImportFromProj4('+proj=aea +lat_1=43 +lat_2=48 +lat_0=34 +lon_0=-120 +x_0=600000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs')
+    
+    coordTrans = osr.CoordinateTransformation(inSpatialRef, outSpatialRef)
+
+    shpDriver = ogr.GetDriverByName("ESRI Shapefile")
+    if os.path.exists(outputfn):
+        shpDriver.DeleteDataSource(outputfn)
+    outDataSet = shpDriver.CreateDataSource(outputfn)
+    outLayer = outDataSet.CreateLayer(outputfn, geom_type=ogr.wkbPolygon)
+    outLayerDefn = outLayer.GetLayerDefn()
+
+    inFeature = inLayer.GetNextFeature()
+    while inFeature:
+        geom = inFeature.GetGeometryRef()
+        geom.Transform(coordTrans)
+        outFeature = ogr.Feature(outLayerDefn)
+        outFeature.SetGeometry(geom)
+        outLayer.CreateFeature(outFeature)
+        inFeature = inLayer.GetNextFeature()
 def removeBuffer(bufferfn,gridDict,rasterfn,costSurfaceArray):
 
     standsBuffer = ogr.Open(bufferfn)
@@ -594,15 +620,19 @@ def selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,rasterfn):
     return selectedCell, gridDict
 
 
-def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
+def main(standsfn,costSurfacefn,newRoadsfn,skidDist=300):
     bufferfn = 'buffer.shp'
     gridfn = 'grid.shp'
     osmRoadsTiffn = 'OSMRoads.tif'
     newCostSurfacefn = 'newCostSurface.tif' 
     standsLinefn = 'standsLine.shp'
+    reprostandsfn = 'standsReprojected.shp'
+    
+    reproject(standsfn,reprostandsfn)
+    
     gridHeight = gridWidth = getGridWidth(costSurfacefn) # creates gridWidth&gridHeight from raster width if not specified      
 
-    createBuffer(standsfn, bufferfn, skidDist) # creates 'buffer_stands.shp' and list of buffer features
+    createBuffer(reprostandsfn, bufferfn, skidDist) # creates 'buffer_stands.shp' and list of buffer features
     print 'Buffer created'
     
     bbox = createProjectBbox(bufferfn) # creates bbox based on bufferfn's bbox
@@ -623,9 +653,9 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
     array2raster(newCostSurfacefn,costSurfacefn,bbox,costSurfaceArray) # writes costSurfaceArray to 'newCostSurface.tif'
     print 'Existing roads downloaded'
     
-    standsarray = shp2array(standsfn,newCostSurfacefn) # creates array from stands
+    standsarray = shp2array(reprostandsfn,newCostSurfacefn) # creates array from stands
     costSurfaceArray[standsarray == 0] **= 2     # updates array, area outside of stands
-    poly2line(standsfn,standsLinefn) # creates stands line shapefile
+    poly2line(reprostandsfn,standsLinefn) # creates stands line shapefile
     standLinesarray = shp2array(standsLinefn,newCostSurfacefn) # creates array from stands line
     costSurfaceArray[standLinesarray == 1] /= 2    # updates array, stands boundaries    
     
@@ -652,8 +682,8 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
     
         
 if __name__ == "__main__":
-    standsfn = 'DickeyGap2.shp'
-    costSurfacefn = 'Dickey_CostSurface.tif'
-    newRoadsfn = 'newRoadsDickey21.shp'
+    standsfn = 'testdata/test_stand.shp'
+    costSurfacefn = 'testdata/CostSurface.tif'
+    newRoadsfn = 'newRoad.shp'
     
     main(standsfn,costSurfacefn,newRoadsfn)
