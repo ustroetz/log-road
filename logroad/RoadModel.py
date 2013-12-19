@@ -85,13 +85,15 @@ def array2shp(array,outSHPfn,newCostSurfacefn):
     return length
     
 def bbox2pixelOffset(rasterfn,bbox):
+    
+    print bbox
     xmin,xmax,ymin,ymax = bbox
     pxmin,pymin,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmin,ymin)
     pxmax,pymax,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmax,ymax)
     xsize = abs(pxmax - pxmin)
     ysize = abs(pymax - pymin)
     xoff = pxmin
-    yoff = pymin-ysize
+    yoff = pymax
     return xoff,yoff,xsize,ysize,pixelWidth,pixelHeight #xoff,yoff are the counts from the origion of the raster. xsize (rasterwidth),ysize(rasterheight) are the cols,rows of the raster
 
 def coord2pixelOffset(rasterfn,x,y):
@@ -287,7 +289,7 @@ def getGridWidth(costSurfacefn):
         
     return gridWidth
             
-def osm2tif(bbox,costSurfacefn,osmRoadsTiffn):
+def osm2tif(bbox,costSurfacefn,osmRoadsSHPfn):
     def reprojectToWGS84(bbox,offsetBbox):  
         xmin,xmax,ymin,ymax = bbox
         xmin -= offsetBbox
@@ -335,7 +337,7 @@ def osm2tif(bbox,costSurfacefn,osmRoadsTiffn):
 
         # create the output SpatialReference
         targetSR = osr.SpatialReference()
-        targetSR.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
+        targetSR.ImportFromProj4('+proj=aea +lat_1=43 +lat_2=48 +lat_0=34 +lon_0=-120 +x_0=600000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs')
 
         # create transform
         coordTrans = osr.CoordinateTransformation(sourceSR,targetSR)
@@ -371,34 +373,9 @@ def osm2tif(bbox,costSurfacefn,osmRoadsTiffn):
         outDataSource = None
         
         return featureCount
-
-    def shp2geotiff(rasterfn,bbox,offsetBbox,osmRoadsSHPfn,osmRoadsTiffn):    
-        xmin,xmax,ymin,ymax = bbox
-        xmin -= offsetBbox
-        xmax += offsetBbox
-        ymin -= offsetBbox
-        ymax += offsetBbox
-        bbox = xmin,xmax,ymin,ymax
-        xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
-    
-        source_ds = ogr.Open(osmRoadsSHPfn)
-        source_layer = source_ds.GetLayer()
-    
-        target_ds = gdal.GetDriverByName('GTiff').Create(osmRoadsTiffn, xsize, ysize, 1, gdal.GDT_Float32)
-        target_ds.SetGeoTransform((xmin, pixelWidth, 0, ymax, 0, pixelHeight))
-        band = target_ds.GetRasterBand(1)
-        NoData_value = 255
-        band.SetNoDataValue(NoData_value)
-        band.FlushCache()        
-        gdal.RasterizeLayer(target_ds, [1], source_layer, burn_values=[1])   
-
-        target_dsSRS = osr.SpatialReference()
-        target_dsSRS.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
-        target_ds.SetProjection(target_dsSRS.ExportToWkt())
         
-    def main(bbox,costSurfacefn,osmRoadsTiffn):
+    def main(bbox,costSurfacefn,osmRoadsSHPfn):
         offsetBbox = 2
-        osmRoadsSHPfn = 'OSMroads.shp'
         bboxWGS84 = reprojectToWGS84(bbox,offsetBbox)  # reprojects bbox to WGS84
         osmRoadsAPI(bboxWGS84) # creates 'roads.osm'
         featureCount = osm2shp(osmRoadsSHPfn) # creates 'osmroads.shp'
@@ -409,12 +386,11 @@ def osm2tif(bbox,costSurfacefn,osmRoadsTiffn):
             featureCount = osm2shp(osmRoadsSHPfn) # creates 'osmroads.shp'
         
         offsetBbox += 100
-        shp2geotiff(costSurfacefn,bbox,offsetBbox,osmRoadsSHPfn,osmRoadsTiffn) # creates 'OSMroads.tif'
         
         return offsetBbox
     
     if __name__ == "__main__":
-        offsetBbox = main(bbox,costSurfacefn,osmRoadsTiffn)
+        offsetBbox = main(bbox,costSurfacefn,osmRoadsSHPfn)
         return offsetBbox
 
 def pixelOffset2coord(rasterfn,xOffset,yOffset):
@@ -625,10 +601,10 @@ def selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,rasterfn):
     return selectedCell, gridDict
 
 
-def main(standsfn,costSurfacefn,newRoadsfn,skidDist=300):
+def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
     bufferfn = 'buffer.shp'
     gridfn = 'grid.shp'
-    osmRoadsTiffn = 'OSMRoads.tif'
+    osmRoadsSHPfn = 'OSMroads.shp'
     newCostSurfacefn = 'newCostSurface.tif' 
     standsLinefn = 'standsLine.shp'
     reprostandsfn = 'standsReprojected.shp'
@@ -644,7 +620,7 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=300):
     
     bbox = createProjectBbox(bufferfn) # creates bbox based on bufferfn's bbox
     
-    offsetBbox = osm2tif(bbox,costSurfacefn,osmRoadsTiffn) # creates 'OSMroads.tif' (existing OSM roads)    
+    offsetBbox = osm2tif(bbox,costSurfacefn,osmRoadsSHPfn) # creates 'OSMroads.tif' (existing OSM roads)    
     
     bbox = createGrid(gridfn,bbox,offsetBbox,gridHeight,gridWidth) # creates 'grid.shp' and updates bbox based on grid's extent
     gridDict = createGridDict(gridfn,bufferfn) # creates dict (key=cellID; value: List of buffers intersecting cell)
@@ -653,15 +629,16 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=300):
     #gridDictFile.write(str(gridDict))    
     print 'Grid created'
     
-    costSurfaceArray = raster2array(costSurfacefn,bbox) # creates array 'costSurfaceArray'
-    
-    osmRoadsArray = raster2array(osmRoadsTiffn,bbox) # creates array 'osmRoadsArray'
-    costSurfaceArray[osmRoadsArray == 1.0] = 0 # updates array 'costSurfaceArray'  
+    # update array (based on OSM streets, areas outside property, stand boundaries)
+    costSurfaceArray = raster2array(costSurfacefn,bbox) # creates array 'costSurfaceArray' 
     array2raster(newCostSurfacefn,costSurfacefn,bbox,costSurfaceArray) # writes costSurfaceArray to 'newCostSurface.tif'
-    print 'Existing roads downloaded'
+  
+    osmRoadsArray = shp2array(osmRoadsSHPfn,newCostSurfacefn) # creates array 'osmRoadsArray'
+    costSurfaceArray[osmRoadsArray == 1.0] = 0 # updates array 'costSurfaceArray'
     
     standsarray = shp2array(reprostandsfn,newCostSurfacefn) # creates array from stands
     costSurfaceArray[standsarray == 0] **= 2     # updates array, area outside of stands
+  
     poly2line(reprostandsfn,standsLinefn) # creates stands line shapefile
     standLinesarray = shp2array(standsLinefn,newCostSurfacefn) # creates array from stands line
     costSurfaceArray[standLinesarray == 1] /= 2    # updates array, stands boundaries    
@@ -689,8 +666,8 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=300):
     
         
 if __name__ == "__main__":
-    standsfn = 'tes.shp'
-    costSurfacefn = 'test.tif'
+    standsfn = 'testdata/test_stand.shp'
+    costSurfacefn = 'testdata/CostSurface.tif'
     newRoadsfn = 'newRoad.shp'
     
     main(standsfn,costSurfacefn,newRoadsfn)
