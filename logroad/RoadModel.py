@@ -1,5 +1,5 @@
 import ogr, gdal, osr
-import os, sys
+import os, sys, glob
 import numpy as np
 from skimage.graph import route_through_array
 import requests
@@ -85,8 +85,6 @@ def array2shp(array,outSHPfn,newCostSurfacefn):
     return length
     
 def bbox2pixelOffset(rasterfn,bbox):
-    
-    print bbox
     xmin,xmax,ymin,ymax = bbox
     pxmin,pymin,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmin,ymin)
     pxmax,pymax,pixelWidth,pixelHeight = coord2pixelOffset(rasterfn,xmax,ymax)
@@ -660,7 +658,10 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
     length = array2shp(costSurfaceArray,newRoadsfn,newCostSurfacefn) # writes final roads in shapefile and returns length of new roads in meters
         
     print 'Length new roads (miles): ', length*0.000621371 
-
+    
+    for pattern in ['buffer*','grid*','OSMroads*','newCostSurface*','standsLine*','standsReprojected*']:
+        for filename in glob.glob(pattern):
+            os.remove(filename)
     
         
 if __name__ == "__main__":
