@@ -386,12 +386,10 @@ def osm2tif(bbox,costSurfacefn,osmRoadsSHPfn):
             featureCount = osm2shp(osmRoadsSHPfn) # creates 'osmroads.shp'
         
         offsetBbox += 100
-        
         return offsetBbox
-    
-    if __name__ == "__main__":
-        offsetBbox = main(bbox,costSurfacefn,osmRoadsSHPfn)
-        return offsetBbox
+
+    offsetBbox = main(bbox,costSurfacefn,osmRoadsSHPfn)
+    return offsetBbox
 
 def pixelOffset2coord(rasterfn,xOffset,yOffset):
     raster = gdal.Open(rasterfn)
