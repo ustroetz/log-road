@@ -1,22 +1,12 @@
 import ogr, gdal, osr
-import os, sys, glob
+import os, sys
 import numpy as np
 from skimage.graph import route_through_array
 import requests
 from math import ceil, sqrt
 import itertools
 
-def cellID2cellIndex(selectedCell,gridfn,CostSurfacefn):
-    grid = ogr.Open(gridfn)
-    lyrGrid = grid.GetLayer()
-    featSelectedCell = lyrGrid.GetFeature(selectedCell)
-    geomSelectedCell = featSelectedCell.GetGeometryRef()
-    centroidSelectedCell = geomSelectedCell.Centroid()
-    selectedCellX = centroidSelectedCell.GetX()
-    selectedCellY = centroidSelectedCell.GetY()
-    selectedCellIndexX,selectedCellIndexY,pixelWidth,pixelHeight = coord2pixelOffset(CostSurfacefn,selectedCellX,selectedCellY)
-    return selectedCellIndexX,selectedCellIndexY
-   
+ 
 def array2raster(newRasterfn,rasterfn,bbox,array):
     xmin,xmax,ymin,ymax = bbox
     xoff, yoff, xsize, ysize, pixelWidth, pixelHeight = bbox2pixelOffset(rasterfn,bbox)
@@ -94,6 +84,17 @@ def bbox2pixelOffset(rasterfn,bbox):
     yoff = pymax
     return xoff,yoff,xsize,ysize,pixelWidth,pixelHeight #xoff,yoff are the counts from the origion of the raster. xsize (rasterwidth),ysize(rasterheight) are the cols,rows of the raster
 
+def cellID2cellIndex(selectedCell,gridfn,CostSurfacefn):
+    grid = ogr.Open(gridfn)
+    lyrGrid = grid.GetLayer()
+    featSelectedCell = lyrGrid.GetFeature(selectedCell)
+    geomSelectedCell = featSelectedCell.GetGeometryRef()
+    centroidSelectedCell = geomSelectedCell.Centroid()
+    selectedCellX = centroidSelectedCell.GetX()
+    selectedCellY = centroidSelectedCell.GetY()
+    selectedCellIndexX,selectedCellIndexY,pixelWidth,pixelHeight = coord2pixelOffset(CostSurfacefn,selectedCellX,selectedCellY)
+    return selectedCellIndexX,selectedCellIndexY
+  
 def coord2pixelOffset(rasterfn,x,y):
     raster = gdal.Open(rasterfn)
     geotransform = raster.GetGeoTransform()
@@ -658,10 +659,11 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
     length = array2shp(costSurfaceArray,newRoadsfn,newCostSurfacefn) # writes final roads in shapefile and returns length of new roads in meters
         
     print 'Length new roads (miles): ', length*0.000621371 
-    
-    for pattern in ['buffer*','grid*','OSMroads*','newCostSurface*','standsLine*','standsReprojected*']:
-        for filename in glob.glob(pattern):
-            os.remove(filename)
+            
+    for filename in os.listdir('.'):
+        for pattern in ['buffer*','grid*','OSMroads*','newCostSurface*','standsLine*','standsReprojected*']:
+            if fnmatch.fnmatch(filename, pattern):
+                os.remove(filename)
     
         
 if __name__ == "__main__":
