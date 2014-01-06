@@ -1,5 +1,5 @@
 import ogr, gdal, osr
-import os, sys
+import os, sys, fnmatch
 import numpy as np
 from skimage.graph import route_through_array
 import requests
@@ -24,8 +24,10 @@ def array2raster(newRasterfn,rasterfn,bbox,array):
         
 
 
-def array2shp(array,outSHPfn,newCostSurfacefn):
+def array2shp(costSurfaceArray,osmRoadsArray,outSHPfn,newCostSurfacefn):
     
+    
+    ## New Road to geometry
     # max distance between points
     raster = gdal.Open(newCostSurfacefn)
     geotransform = raster.GetGeoTransform()
@@ -33,8 +35,9 @@ def array2shp(array,outSHPfn,newCostSurfacefn):
     maxDistance = ceil(sqrt(2*pixelWidth*pixelWidth))
 
     # array2dict
+    costSurfaceArray[osmRoadsArray == 1.0] = 1 # remove existing roads from new roads
     count = 0
-    roadList = np.where(array == 0)
+    roadList = np.where(costSurfaceArray == 0)
     multipoint = ogr.Geometry(ogr.wkbMultiLineString)
     pointDict = {}
     for indexY in roadList[0]:
@@ -44,7 +47,7 @@ def array2shp(array,outSHPfn,newCostSurfacefn):
         count += 1
 
     # dict2wkbMultiLineString
-    multiline = ogr.Geometry(ogr.wkbMultiLineString)
+    multilineNewRoad = ogr.Geometry(ogr.wkbMultiLineString)
     for i in itertools.combinations(pointDict.values(), 2):
         point1 = ogr.Geometry(ogr.wkbPoint)
         point1.AddPoint(i[0][0],i[0][1])
@@ -57,7 +60,54 @@ def array2shp(array,outSHPfn,newCostSurfacefn):
             line = ogr.Geometry(ogr.wkbLineString)
             line.AddPoint(i[0][0],i[0][1])
             line.AddPoint(i[1][0],i[1][1])
-            multiline.AddGeometry(line)
+            multilineNewRoad.AddGeometry(line)
+            
+    # calculate length of line
+    length = multilineNewRoad.Length()
+    
+    ## OSM road to geometry
+    # max distance between points
+    raster = gdal.Open(newCostSurfacefn)
+    geotransform = raster.GetGeoTransform()
+    pixelWidth = geotransform[1]
+    maxDistance = ceil(sqrt(2*pixelWidth*pixelWidth))
+
+    # array2dict
+    count = 0
+    roadList = np.where(osmRoadsArray == 1.0)
+    multipoint = ogr.Geometry(ogr.wkbMultiLineString)
+    pointDict = {}
+    for indexY in roadList[0]:
+        indexX = roadList[1][count]
+        Xcoord, Ycoord = pixelOffset2coord(newCostSurfacefn,indexX,indexY)
+        pointDict[count] = (Xcoord, Ycoord)
+        count += 1
+
+    # dict2wkbMultiLineString
+    multilineOSMRoad = ogr.Geometry(ogr.wkbMultiLineString)
+    for i in itertools.combinations(pointDict.values(), 2):
+        point1 = ogr.Geometry(ogr.wkbPoint)
+        point1.AddPoint(i[0][0],i[0][1])
+        point2 = ogr.Geometry(ogr.wkbPoint)
+        point2.AddPoint(i[1][0],i[1][1])
+
+        distance = point1.Distance(point2)
+
+        if distance < maxDistance:
+            line = ogr.Geometry(ogr.wkbLineString)
+            line.AddPoint(i[0][0],i[0][1])
+            line.AddPoint(i[1][0],i[1][1])
+            multilineOSMRoad.AddGeometry(line)
+    
+    # Transform to EPSG 3857
+    inSpatialRef = osr.SpatialReference()      
+    inSpatialRef.ImportFromProj4('+proj=aea +lat_1=43 +lat_2=48 +lat_0=34 +lon_0=-120 +x_0=600000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs')
+    outSpatialRef = osr.SpatialReference()
+    outSpatialRef.ImportFromEPSG(3857)
+    
+    coordTrans = osr.CoordinateTransformation(inSpatialRef, outSpatialRef)
+    multilineNewRoad.Transform(coordTrans)
+    multilineOSMRoad.Transform(coordTrans)
     
     # wkbMultiLineString2shp
     shpDriver = ogr.GetDriverByName("ESRI Shapefile")
@@ -65,13 +115,20 @@ def array2shp(array,outSHPfn,newCostSurfacefn):
         shpDriver.DeleteDataSource(outSHPfn)
     outDataSource = shpDriver.CreateDataSource(outSHPfn)
     outLayer = outDataSource.CreateLayer(outSHPfn, geom_type=ogr.wkbMultiLineString )
+    # create a field
+    idField = ogr.FieldDefn('type', ogr.OFTString)
+    outLayer.CreateField(idField)
     featureDefn = outLayer.GetLayerDefn()
     outFeature = ogr.Feature(featureDefn)
-    outFeature.SetGeometry(multiline)
+    outFeature.SetGeometry(multilineNewRoad)
+    outFeature.SetField('type', 'new')
     outLayer.CreateFeature(outFeature)
+    outFeature = ogr.Feature(featureDefn)
+    outFeature.SetGeometry(multilineOSMRoad)
+    outFeature.SetField('type', 'existing')
+    outLayer.CreateFeature(outFeature)
+
     
-    # calculate length of line
-    length = multiline.Length()
     return length
     
 def bbox2pixelOffset(rasterfn,bbox):
@@ -441,43 +498,7 @@ def raster2array(rasterfn,bbox):
     return array  
 
   
-def shp2raster(inputSHPfn,rasterfn,outputRasterfn):    
-    
-    source_ds = ogr.Open(inputSHPfn)
-    source_layer = source_ds.GetLayer()
-    
-    raster = gdal.Open(rasterfn)
-    geotransform = raster.GetGeoTransform()
-    originX = geotransform[0]
-    originY = geotransform[3] 
-    pixelWidth = geotransform[1] 
-    pixelHeight = geotransform[5]
-    cols = raster.RasterXSize
-    rows = raster.RasterYSize
-
-    target_ds = gdal.GetDriverByName('GTiff').Create(outputRasterfn, cols, rows, 1, gdal.GDT_Float32) 
-    target_ds.SetGeoTransform((originX, pixelWidth, 0, originY, 0, pixelHeight))
-    band = target_ds.GetRasterBand(1)
-    NoData_value = 0
-    band.SetNoDataValue(NoData_value)
-    band.FlushCache()        
-    gdal.RasterizeLayer(target_ds, [1], source_layer, burn_values=[1])   
-
-    target_dsSRS = osr.SpatialReference()
-    target_dsSRS.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
-    target_ds.SetProjection(target_dsSRS.ExportToWkt())
-
-def shp2array(inputSHPfn,rasterfn):  
-    outputRasterfn = 'intermediate.tif'  
-    shp2raster(inputSHPfn,rasterfn,outputRasterfn)
-    
-    raster = gdal.Open(outputRasterfn)
-    band = raster.GetRasterBand(1)
-    array = band.ReadAsArray()
-    os.remove(outputRasterfn)
-    return array
-
-def reproject(inputfn,outputfn):
+def reprojectFrom3857(inputfn,outputfn):
     ds = ogr.Open(inputfn)
     inLayer = ds.GetLayer()
     
@@ -503,6 +524,7 @@ def reproject(inputfn,outputfn):
         outFeature.SetGeometry(geom)
         outLayer.CreateFeature(outFeature)
         inFeature = inLayer.GetNextFeature()
+
 def removeBuffer(bufferfn,gridDict,rasterfn,costSurfaceArray):
 
     standsBuffer = ogr.Open(bufferfn)
@@ -543,6 +565,9 @@ def removeBuffer(bufferfn,gridDict,rasterfn,costSurfaceArray):
     gridDict = {x:[z for z in y if z not in removeBufferList] for x,y in gridDict.items()}
     gridDict = {i: cellStands for i, cellStands in gridDict.items() if cellStands}        
     return gridDict
+
+
+
 
 def selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,rasterfn):
 
@@ -596,7 +621,41 @@ def selectCell(gridfn,bufferfn,gridDict,costSurfaceArray,rasterfn):
     gridDict = {x:[z for z in y if z not in removeBufferList] for x,y in gridDict.items()}
     gridDict = {i: cellStands for i, cellStands in gridDict.items() if cellStands}
     return selectedCell, gridDict
+def shp2raster(inputSHPfn,rasterfn,outputRasterfn):    
+    
+    source_ds = ogr.Open(inputSHPfn)
+    source_layer = source_ds.GetLayer()
+    
+    raster = gdal.Open(rasterfn)
+    geotransform = raster.GetGeoTransform()
+    originX = geotransform[0]
+    originY = geotransform[3] 
+    pixelWidth = geotransform[1] 
+    pixelHeight = geotransform[5]
+    cols = raster.RasterXSize
+    rows = raster.RasterYSize
 
+    target_ds = gdal.GetDriverByName('GTiff').Create(outputRasterfn, cols, rows, 1, gdal.GDT_Float32) 
+    target_ds.SetGeoTransform((originX, pixelWidth, 0, originY, 0, pixelHeight))
+    band = target_ds.GetRasterBand(1)
+    NoData_value = 0
+    band.SetNoDataValue(NoData_value)
+    band.FlushCache()        
+    gdal.RasterizeLayer(target_ds, [1], source_layer, burn_values=[1])   
+
+    target_dsSRS = osr.SpatialReference()
+    target_dsSRS.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
+    target_ds.SetProjection(target_dsSRS.ExportToWkt())
+
+def shp2array(inputSHPfn,rasterfn):  
+    outputRasterfn = 'intermediate.tif'  
+    shp2raster(inputSHPfn,rasterfn,outputRasterfn)
+    
+    raster = gdal.Open(outputRasterfn)
+    band = raster.GetRasterBand(1)
+    array = band.ReadAsArray()
+    os.remove(outputRasterfn)
+    return array
 
 def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
     bufferfn = 'buffer.shp'
@@ -608,7 +667,7 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
     checkfile(standsfn)
     checkfile(costSurfacefn)
     
-    reproject(standsfn,reprostandsfn)
+    reprojectFrom3857(standsfn,reprostandsfn)
     
     gridHeight = gridWidth = getGridWidth(costSurfacefn) # creates gridWidth&gridHeight from raster width if not specified      
 
@@ -655,13 +714,12 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
         gridDict = removeBuffer(bufferfn,gridDict,newCostSurfacefn,costSurfaceArray) # removes buffers touching new road from gridDict
         
         
-    costSurfaceArray[osmRoadsArray == 1.0] = 1 # remove existing roads from new roads  
-    length = array2shp(costSurfaceArray,newRoadsfn,newCostSurfacefn) # writes final roads in shapefile and returns length of new roads in meters
+    length = array2shp(costSurfaceArray,osmRoadsArray,newRoadsfn,newCostSurfacefn) # writes final roads in shapefile and returns length of new roads in meters
         
     print 'Length new roads (miles): ', length*0.000621371 
             
     for filename in os.listdir('.'):
-        for pattern in ['buffer*','grid*','OSMroads*','newCostSurface*','standsLine*','standsReprojected*']:
+        for pattern in ['buffer*','grid*','newCostSurface*','standsLine*','standsReprojected*']:
             if fnmatch.fnmatch(filename, pattern):
                 os.remove(filename)
     
