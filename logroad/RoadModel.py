@@ -168,7 +168,7 @@ def checkfile(fn):
     try:
         open(fn)
     except:
-        sys.exit('ERROR: File can not be found in the file system.')
+        sys.exit('ERROR: File %s can not be found in the file system.' %fn)
 def createGrid(gridfn,bbox,offsetBbox,gridHeight,gridWidth):
     xmin,xmax,ymin,ymax = bbox
     xmin -= offsetBbox
@@ -715,15 +715,14 @@ def main(standsfn,costSurfacefn,newRoadsfn,skidDist=0):
         
         
     length = array2shp(costSurfaceArray,osmRoadsArray,newRoadsfn,newCostSurfacefn) # writes final roads in shapefile and returns length of new roads in meters
+    
+    for filename in os.listdir('.'):
+        for pattern in ['buffer*','grid*','newCostSurface*','standsLine*','standsReprojected*', 'OSMroads*']:
+            if fnmatch.fnmatch(filename, pattern):
+                os.remove(filename)
         
     print 'Length new roads (miles): ', length*0.000621371 
             
-    for filename in os.listdir('.'):
-        for pattern in ['buffer*','grid*','newCostSurface*','standsLine*','standsReprojected*']:
-            if fnmatch.fnmatch(filename, pattern):
-                os.remove(filename)
-    
-        
 if __name__ == "__main__":
     standsfn = 'testdata/test_stand.shp'
     costSurfacefn = 'testdata/CostSurface.tif'
