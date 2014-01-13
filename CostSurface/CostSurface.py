@@ -75,8 +75,11 @@ def main(baseRasterfn,CostSurfacefn,dataDict):
         else:
             array = raster2array(fn) # raster2array
             array = array*updateValue # update array by value
-        
-        costSurfaceArray += array
+            
+        if (fn=='rasterized.tif'):
+            costSurfaceArray[array == 100] *= 100
+        else:       
+            costSurfaceArray += array
     
     costSurfaceArray[costSurfaceArray < 1] = 1 # change value of 0 to 1 otherwise they mix up with 0 values of roads
     
@@ -85,6 +88,5 @@ def main(baseRasterfn,CostSurfacefn,dataDict):
 if __name__ == "__main__":
     baseRasterfn = 'Slope.tif'
     CostSurfacefn = 'CostSurface.tif'      
-    dataDict = {'Slope.tif':2, 'testRiver.shp':np.inf}
-#    dataDict = {'Slope.tif':2}
+    dataDict = {'Slope.tif':2, 'river_buffer.shp':100}
     main(baseRasterfn, CostSurfacefn, dataDict)
