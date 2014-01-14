@@ -35,8 +35,9 @@ def shp2raster(inputfn,baseRasterfn):
     target_ds.SetProjection(target_dsSRS.ExportToWkt())
 
 
-def array2raster(newRasterfn,rasterfn,costSurfaceArray):
-    raster = gdal.Open(baseRasterfn)
+def array2raster(rasterfn,costSurfaceArray):
+    newRasterfn = 'testdata/CostSurface2.tif'     
+    raster = gdal.Open(rasterfn)
     geotransform = raster.GetGeoTransform()
     originX = geotransform[0]
     originY = geotransform[3] 
@@ -56,37 +57,21 @@ def array2raster(newRasterfn,rasterfn,costSurfaceArray):
     outband.FlushCache()
         
 
-def main(baseRasterfn,CostSurfacefn,dataDict):
-    
-    costSurfaceArray = raster2array(baseRasterfn) 
-    costSurfaceArray *=0
+def main(riverfn,slopefn):
+    shp2raster(riverfn,slopefn)  
+    riverArray = raster2array('rasterized.tif')
+    os.remove('rasterized.tif')
 
-    for fn in dataDict:
-        updateValue = dataDict[fn]
-        
-        if ".shp" in fn:
-            shp2raster(fn,baseRasterfn)
-            fn = 'rasterized.tif'
-        
-        if 'Slope' in fn:
-            array = raster2array(fn) # raster2array
-            array[array > 50] **=2
-            array = array*1 # update array by value
-        else:
-            array = raster2array(fn) # raster2array
-            array = array*updateValue # update array by value
-            
-        if (fn=='rasterized.tif'):
-            costSurfaceArray[array == 100] *= 100
-        else:       
-            costSurfaceArray += array
+    costSurfaceArray = raster2array(slopefn)
+
+    costSurfaceArray[costSurfaceArray > 50] **=2
+    costSurfaceArray[riverArray == 1] **=5
+    costSurfaceArray[costSurfaceArray < 0.001] = 1 # change value of 0 to 1 otherwise they mix up with 0 values of roads
     
-    costSurfaceArray[costSurfaceArray < 1] = 1 # change value of 0 to 1 otherwise they mix up with 0 values of roads
-    
-    array2raster(CostSurfacefn,baseRasterfn,costSurfaceArray)
+    array2raster(slopefn,costSurfaceArray)
     
 if __name__ == "__main__":
-    baseRasterfn = 'Slope.tif'
-    CostSurfacefn = 'CostSurface.tif'      
-    dataDict = {'Slope.tif':2, 'river_buffer.shp':100}
-    main(baseRasterfn, CostSurfacefn, dataDict)
+    riverfn = 'rivers.shp'
+    slopefn = 'Slope.tif'
+ 
+    main(riverfn, slopefn)
