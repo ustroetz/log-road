@@ -44,7 +44,7 @@ Ideally the CostSurface consists for actuall $ US values in order to estimate th
 But for the porpuse to identify the length and location of the new roads, a relativ coast surface is sufficient.
 
 `test_costsurface.py` with `CostSurface.py` can be used to create a cost surface based on variables slope and river (buffered rivers). 
-In `CostSurface.py` the relation between slope and rivers can be specified. We received the best test results with the following parameters:
+In `CostSurface.py` the relation between the two can be specified. We received the best test results with the following parameters:
 ```
     costSurfaceArray[costSurfaceArray > 50] **=2
     costSurfaceArray[riverArray == 1] **=5
