@@ -31,12 +31,12 @@ def shp2raster(inputfn,baseRasterfn):
     gdal.RasterizeLayer(target_ds, [1], source_layer, burn_values=[1])   
 
     target_dsSRS = osr.SpatialReference()
-    target_dsSRS.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
+    target_dsSRS.ImportFromEPSG(32610)
     target_ds.SetProjection(target_dsSRS.ExportToWkt())
 
 
 def array2raster(rasterfn,costSurfaceArray):
-    newRasterfn = 'testdata/CostSurface2.tif'     
+    newRasterfn = 'testdata/CostSurface.tif'     
     raster = gdal.Open(rasterfn)
     geotransform = raster.GetGeoTransform()
     originX = geotransform[0]
