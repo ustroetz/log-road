@@ -38,3 +38,13 @@ Shapefile <sub><sup>(EPSG3857)</sup></sub>  |
 Requires `python-gdal`, `skimage.graph`, `requests`, and `numpy`
 
 To install, simply `python setup.py install` or work directly from the root directory.
+
+### Cost Surface
+Ideally the CostSurface consists for actuall $ US values in order to estimate the actual costs of construction to roads. But for the porpuse to identify the length and location of the new roads, a relativ coast surface is sufficient.
+`test_costsurface.py` with `CostSurface.py` can be used to create a cost surface based on slope and river polygons (buffered rivers). 
+In `CostSurface.py` the relation between slope and rivers can be specified. We received the best test results with the following parameters:
+```
+    costSurfaceArray[costSurfaceArray > 50] **=2
+    costSurfaceArray[riverArray == 1] **=5
+```
+
