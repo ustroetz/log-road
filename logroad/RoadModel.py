@@ -104,7 +104,7 @@ def array2shp(costSurfaceArray,osmRoadsArray,outSHPfn,newCostSurfacefn):
     
     # Transform to EPSG 3857
     inSpatialRef = osr.SpatialReference()      
-    inSpatialRef.ImportFromProj4('+proj=aea +lat_1=43 +lat_2=48 +lat_0=34 +lon_0=-120 +x_0=600000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs')
+    inSpatialRef.ImportFromEPSG(32610)
     outSpatialRef = osr.SpatialReference()
     outSpatialRef.ImportFromEPSG(3857)
     
@@ -368,7 +368,7 @@ def osm2tif(bbox,costSurfacefn,osmRoadsSHPfn):
         righttop = ogr.Geometry(ogr.wkbPoint)
         righttop.AddPoint(bbox[1], bbox[3])
         inSpatialRef = osr.SpatialReference()
-        inSpatialRef.ImportFromProj4('+proj=aea +lat_1=43 +lat_2=48 +lat_0=34 +lon_0=-120 +x_0=600000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs')
+        inSpatialRef.ImportFromEPSG(32610)
         outSpatialRef = osr.SpatialReference()
         outSpatialRef.ImportFromEPSG(4326)
 
@@ -403,7 +403,7 @@ def osm2tif(bbox,costSurfacefn,osmRoadsSHPfn):
 
         # create the output SpatialReference
         targetSR = osr.SpatialReference()
-        targetSR.ImportFromProj4('+proj=aea +lat_1=43 +lat_2=48 +lat_0=34 +lon_0=-120 +x_0=600000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs')
+        targetSR.ImportFromEPSG(32610)
 
         # create transform
         coordTrans = osr.CoordinateTransformation(sourceSR,targetSR)
@@ -515,7 +515,7 @@ def reprojectFrom3857(inputfn,outputfn):
     inSpatialRef = osr.SpatialReference()    
     inSpatialRef.ImportFromEPSG(3857)
     outSpatialRef = osr.SpatialReference()
-    outSpatialRef.ImportFromProj4('+proj=aea +lat_1=43 +lat_2=48 +lat_0=34 +lon_0=-120 +x_0=600000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs')
+    outSpatialRef.ImportFromEPSG(32610)
     
     coordTrans = osr.CoordinateTransformation(inSpatialRef, outSpatialRef)
 
@@ -654,7 +654,7 @@ def shp2raster(inputSHPfn,rasterfn,outputRasterfn):
     gdal.RasterizeLayer(target_ds, [1], source_layer, burn_values=[1])   
 
     target_dsSRS = osr.SpatialReference()
-    target_dsSRS.ImportFromWkt('PROJCS["Albers Equal Area",GEOGCS["grs80",DATUM["unknown",SPHEROID["Geodetic_Reference_System_1980",6378137,298.257222101],TOWGS84[0,0,0,0,0,0,0]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["standard_parallel_1",43],PARAMETER["standard_parallel_2",48],PARAMETER["latitude_of_center",34],PARAMETER["longitude_of_center",-120],PARAMETER["false_easting",600000],PARAMETER["false_northing",0],UNIT["Meter",1]]')
+    target_dsSRS.ImportFromEPSG(32610)
     target_ds.SetProjection(target_dsSRS.ExportToWkt())
 
 def shp2array(inputSHPfn,rasterfn):  
